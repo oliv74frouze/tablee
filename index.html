@@ -323,6 +323,14 @@ button.mode{cursor:pointer;border:0;font:inherit;max-width:46vw;white-space:nowr
         <p class="hint">La pré-saisie par l'IA est limitée à 30 par personne et par mois. Tes photos et recettes restent privées à ta tribu. <a href="confidentialite.html">Confidentialité</a></p>
       </div>
       <div class="note"><h2>Ma cuisine</h2><p class="hint">Coche ce que tu as chez toi : le filtre « Faisable chez moi » du carnet s'en sert. Visible par toi seul.</p><div class="tgrid" id="kitchen"></div></div>
+      <div class="note" id="impBox"><h2>Importer des recettes</h2>
+        <p class="hint">Récupère les recettes du prototype Tablée (bouton « Copier mes recettes » ou fichier tablee-recettes.json). Elles seront publiées à ton nom, avec leurs photos et leurs dates.</p>
+        <textarea id="impTxt" placeholder="Colle ici le texte copié depuis le prototype" style="width:100%;height:70px;font-size:12px"></textarea>
+        <label class="btn" for="impFile" style="display:block;text-align:center">…ou choisir le fichier .json</label>
+        <input type="file" id="impFile" accept=".json,application/json,text/plain" hidden>
+        <div class="lbl">Dans quelles tribus ?</div><div class="chips" id="impTribes"></div>
+        <button class="btn pri wide" id="impGo">Importer</button>
+        <p class="hint" id="impMsg"></p></div>
       <div class="note"><h2>Mes recettes</h2><div id="myPosts" style="display:flex;flex-direction:column;gap:10px"></div></div>
     </section>
   </main>

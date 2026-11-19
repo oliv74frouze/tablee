@@ -278,7 +278,60 @@ async function saveCart(items){
 }
 
 /* ---------- inviter ---------- */
+const IMP = {tribes:null};
+function renderImport(){
+  const box = $('#impBox'); if (!box) return;
+  box.style.display = S.mode === 'sb' && S.tribe ? '' : 'none'; if (box.style.display) return;
+  if (!IMP.tribes || IMP.forTribe !== S.tribe.id){ IMP.tribes = [S.tribe.id]; IMP.forTribe = S.tribe.id; }
+  $('#impTribes').innerHTML = S.tribes.map(t => `<button type="button" class="chip" data-imp="${t.id}" aria-pressed="${IMP.tribes.includes(t.id)}">${IMP.tribes.includes(t.id) ? '✓ ' : ''}${esc(t.name)}</button>`).join('');
+}
+function parseImport(txt){
+  let d; try { d = JSON.parse(txt.trim()); } catch(e){ throw 'Texte illisible : recopie-le en entier depuis le prototype.'; }
+  const posts = Array.isArray(d) ? d : d && d.posts;
+  if (!Array.isArray(posts) || !posts.length) throw 'Aucune recette trouvée dans ce texte.';
+  return posts.filter(p => p && p.name);
+}
+async function runImport(){
+  const msg = t => { $('#impMsg').textContent = t; };
+  let posts; try { posts = parseImport($('#impTxt').value); } catch(e){ msg(e); return; }
+  if (!IMP.tribes || !IMP.tribes.length){ msg('Choisis au moins une tribu.'); return; }
+  posts.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  $('#impGo').disabled = true;
+  let done = 0, skipped = 0; const total = posts.length * IMP.tribes.length;
+  try {
+    for (const T of IMP.tribes){
+      // ne pas importer deux fois la même recette (même nom, même date)
+      const ex = await S.sb.from('posts').select('name, created_at').eq('tribe_id', T).limit(1000);
+      const seen = new Set((ex.data || []).map(r => r.name + '|' + Date.parse(r.created_at)));
+      const idMap = {};
+      for (const p of posts){
+        msg(`Import en cours… ${done + skipped + 1} / ${total}`);
+        if (seen.has(p.name + '|' + (p.createdAt || 0))){ skipped++; continue; }
+        const id = uid(); idMap[p.id] = id;
+        const paths = [];
+        for (const ph of (p.photos || []).slice(0, 3)){
+          if (typeof ph !== 'string' || !/^data:image\//.test(ph)) continue;
+          const path = `${T}/${id}/${uid()}.jpg`;
+          const up = await S.sb.storage.from('photos').upload(path, dataToBlob(ph), {contentType:'image/jpeg', upsert:false});
+          if (!up.error) paths.push(path);
+        }
+        const ro = p.remakeOf ? (idMap[p.remakeOf] || null) : null;
+        const q = {...p, id, remakeOf:ro, rootId:ro ? (idMap[p.rootId] || ro) : id,
+          fromTwist:p.fromTwist ? (idMap[p.fromTwist] || null) : null, photoPaths:paths, tools:Array.isArray(p.tools) ? p.tools : [], diff:Math.max(0, Math.min(5, Math.round(+p.diff || 0))),
+          portions:p.portions ? Math.round(+p.portions) : null, minutes:p.minutes ? Math.round(+p.minutes) : null, abv:p.abv != null && p.abv !== '' && !isNaN(+p.abv) ? +p.abv : null, editedAt:null};
+        const row = {...toRow(q, T), created_at:new Date(p.createdAt || Date.now()).toISOString()};
+        const r = await S.sb.from('posts').insert(row);
+        if (r.error) throw r.error;
+        done++;
+      }
+    }
+    msg(`Import terminé : ${done} post${done > 1 ? 's' : ''} ajouté${done > 1 ? 's' : ''}${skipped ? `, ${skipped} déjà présent${skipped > 1 ? 's' : ''}` : ''}.`);
+    $('#impTxt').value = ''; await reloadTribe();
+  } catch(e){ console.error(e); msg(`Import interrompu après ${done} post(s) : ${(e && e.message) || e}. Relance-le : ce qui est déjà importé ne sera pas dupliqué.`); }
+  finally { $('#impGo').disabled = false; }
+}
 function renderInvite(){
+  renderImport();
   const box = $('#howto'); if (!box) return;
   if (S.mode !== 'sb' || !S.tribe){ box.innerHTML = `<h2>Mode démo</h2><p class="hint">Ce carnet de démonstration reste dans ce navigateur. Pour partager avec ta tribu, l’application doit être reliée à Supabase (voir le guide d’installation).</p>`; return; }
   const link = inviteLink(S.tribe.invite_code), admin = S.tribe.role === 'admin';
@@ -749,6 +802,7 @@ document.addEventListener('click', async e => {
   const o = e.target.closest('[data-open]'); if (o){ openDetail(o.dataset.open); return; }
   const ed = e.target.closest('[data-edit]'); if (ed){ closeDetail(); openCompose(null, ed.dataset.edit); return; }
   const r = e.target.closest('[data-remake]'); if (r){ closeDetail(); openCompose(r.dataset.remake, null, r.dataset.variant || null); return; }
+  const im = e.target.closest('[data-imp]'); if (im){ const id = im.dataset.imp; IMP.tribes = IMP.tribes.includes(id) ? IMP.tribes.filter(x => x !== id) : [...IMP.tribes, id]; renderImport(); return; }
   const al = e.target.closest('[data-also]'); if (al){ const id = al.dataset.also; C.alsoTribes = C.alsoTribes.includes(id) ? C.alsoTribes.filter(x => x !== id) : [...C.alsoTribes, id]; al.setAttribute('aria-pressed', C.alsoTribes.includes(id)); al.textContent = (C.alsoTribes.includes(id) ? '✓ ' : '') + (S.tribes.find(t => t.id === id) || {}).name; return; }
   const w = e.target.closest('[data-want]'); if (w){ toggleWant(w.dataset.want); return; }
   const tb = e.target.closest('[data-tribe]'); if (tb){ const t = S.tribes.find(x => x.id === tb.dataset.tribe); if (t){ await enterTribe(t); show('fil'); } return; }
@@ -804,6 +858,8 @@ const h = (location.hash || '').slice(1); if (['fil','carnet','courses','moi'].i
 
 $('#gGo').onclick = doAuth; $('#gSwitch').onclick = () => { AUTH.signup = !AUTH.signup; $('#gErr').textContent = ''; paintAuth(); };
 $('#gPass').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
+$('#impGo').onclick = runImport;
+$('#impFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $('#impTxt').value = r.result; $('#impMsg').textContent = 'Fichier chargé : touche « Importer ».'; }; r.readAsText(f); e.target.value = ''; };
 $('#tCreate').onclick = () => createTribe().catch(e => { $('#tCreate').disabled = false; $('#tErr').textContent = 'Erreur : ' + (e && e.message || e); }); $('#tJoin').onclick = joinFromInput; $('#gClose').onclick = () => $('#gate').classList.remove('on');
 $('#mode').onclick = () => { if (S.mode === 'sb' && S.me) showGate('tribe'); };
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
