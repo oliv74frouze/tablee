@@ -113,11 +113,13 @@ async function afterLogin(user){
   if (code){ try { const r = await S.sb.rpc('join_tribe', {code}); if (!r.error){ store.set('tablee_tribe', r.data); toast('Bienvenue dans la tribu !'); } else toast('Ce lien d’invitation ne marche plus : demande un nouveau lien.'); } catch(e){} try { sessionStorage.removeItem('tablee_join'); } catch(e){} }
   await loadTribes();
   const want = store.get('tablee_tribe', null), t = S.tribes.find(x => x.id === want) || S.tribes[0];
-  if (t) await enterTribe(t); else showGate('tribe');
+  if (t) await enterTribe(t); else { showGate('tribe'); if (S.tribesErr) $('#tErr').textContent = 'Lecture des tribus impossible : ' + S.tribesErr; }
   loadUserData();
 }
 async function loadTribes(){
   const r = await S.sb.from('members').select('role, tribes(id, name, invite_code)').eq('user_id', S.me);
+  S.tribesErr = r.error ? (r.error.message || String(r.error)) : null;
+  if (r.error) console.error('loadTribes', r.error);
   S.tribes = (r.data || []).filter(x => x.tribes).map(x => ({...x.tribes, role:x.role})).sort((a, b) => a.name.localeCompare(b.name));
 }
 async function createTribe(){
@@ -125,7 +127,10 @@ async function createTribe(){
   $('#tCreate').disabled = true;
   const r = await S.sb.rpc('create_tribe', {tribe_name:name}); $('#tCreate').disabled = false;
   if (r.error){ $('#tErr').textContent = 'Création impossible : réessaie.'; return; }
-  $('#tName').value = ''; await loadTribes(); await enterTribe(S.tribes.find(t => t.id === r.data.id) || S.tribes[0]);
+  $('#tName').value = ''; await loadTribes();
+  const t = S.tribes.find(x => x.id === (r.data && r.data.id)) || S.tribes[0];
+  if (!t){ $('#tErr').textContent = 'Ta tribu est créée, mais l’appli n’arrive pas à la lire : la base n’est pas complètement configurée. (' + (S.tribesErr || 'liste vide') + ')'; return; }
+  await enterTribe(t);
   show('moi'); toast('Ta tribu est prête : envoie le lien d’invitation à tes proches.');
 }
 async function joinFromInput(){
@@ -133,7 +138,10 @@ async function joinFromInput(){
   if (!code){ $('#tErr').textContent = 'Colle le lien d’invitation reçu.'; return; }
   const r = await S.sb.rpc('join_tribe', {code});
   if (r.error){ $('#tErr').textContent = 'Lien inconnu ou expiré : demande un nouveau lien à la personne qui t’invite.'; return; }
-  $('#tCode').value = ''; await loadTribes(); await enterTribe(S.tribes.find(t => t.id === r.data) || S.tribes[0]); toast('Bienvenue dans la tribu !');
+  $('#tCode').value = ''; await loadTribes();
+  const t = S.tribes.find(x => x.id === r.data) || S.tribes[0];
+  if (!t){ $('#tErr').textContent = 'Tribu rejointe, mais l’appli n’arrive pas à la lire : la base n’est pas complètement configurée. (' + (S.tribesErr || 'liste vide') + ')'; return; }
+  await enterTribe(t); toast('Bienvenue dans la tribu !');
 }
 async function signOut(){ await S.sb.auth.signOut(); store.set('tablee_tribe', null); location.reload(); }
 
@@ -796,7 +804,7 @@ const h = (location.hash || '').slice(1); if (['fil','carnet','courses','moi'].i
 
 $('#gGo').onclick = doAuth; $('#gSwitch').onclick = () => { AUTH.signup = !AUTH.signup; $('#gErr').textContent = ''; paintAuth(); };
 $('#gPass').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
-$('#tCreate').onclick = createTribe; $('#tJoin').onclick = joinFromInput; $('#gClose').onclick = () => $('#gate').classList.remove('on');
+$('#tCreate').onclick = () => createTribe().catch(e => { $('#tCreate').disabled = false; $('#tErr').textContent = 'Erreur : ' + (e && e.message || e); }); $('#tJoin').onclick = joinFromInput; $('#gClose').onclick = () => $('#gate').classList.remove('on');
 $('#mode').onclick = () => { if (S.mode === 'sb' && S.me) showGate('tribe'); };
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 

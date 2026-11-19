@@ -229,6 +229,22 @@ drop policy if exists "mes données" on public.user_data;
 create policy "mes données" on public.user_data for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- =====================================================================
+--  Droits d'accès de l'application (nécessaires sur les projets Supabase récents,
+--  qui n'ouvrent plus automatiquement les nouvelles tables). Les règles ci-dessus
+--  continuent de filtrer ce que chacun peut voir ou modifier.
+-- =====================================================================
+grant usage on schema public to anon, authenticated;
+grant select on public.profiles, public.tribes, public.members, public.posts, public.comments, public.wants to authenticated;
+grant update (name) on public.profiles to authenticated;
+grant update (name) on public.tribes to authenticated;
+grant delete on public.members to authenticated;
+grant insert, update, delete on public.posts, public.comments to authenticated;
+grant insert, delete on public.wants to authenticated;
+grant select, insert, update on public.user_data to authenticated;
+revoke all on public.ai_usage from anon, authenticated;
+grant execute on function public.create_tribe(text), public.join_tribe(text), public.reset_invite(uuid), public.ai_use(), public.is_member(uuid), public.shares_tribe(uuid) to authenticated;
+
+-- =====================================================================
 --  Photos : stockage privé, rangé par tribu (« <tribu>/<post>/<fichier>.jpg »)
 -- =====================================================================
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
