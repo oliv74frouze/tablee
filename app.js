@@ -156,7 +156,7 @@ async function enterTribe(t){
 const fromRow = r => ({id:r.id, kind:r.kind, name:r.name, desc:r.descr || '', source:r.source || '', photoPaths:r.photos || [], photos:(r.photos || []).map(p => urlOf(p)).filter(Boolean),
   portions:r.portions, minutes:r.minutes, ingredients:r.ingredients || [], steps:r.steps || [], diff:r.diff || 0, tools:r.tools || [], maker:r.maker || '', style:r.style || '', abv:r.abv,
   where:r.where_buy || '', twist:r.twist || '', remakeOf:r.remake_of, rootId:r.root_id, fromTwist:r.from_twist, author:r.author, createdAt:Date.parse(r.created_at), editedAt:r.edited_at ? Date.parse(r.edited_at) : null});
-const toRow = p => ({id:p.id, tribe_id:S.tribe.id, kind:p.kind, name:p.name, descr:p.desc || '', source:p.source || '', photos:p.photoPaths || [], portions:p.portions || null, minutes:p.minutes || null,
+const toRow = (p, tribeId) => ({id:p.id, tribe_id:tribeId || S.tribe.id, kind:p.kind, name:p.name, descr:p.desc || '', source:p.source || '', photos:p.photoPaths || [], portions:p.portions || null, minutes:p.minutes || null,
   ingredients:p.ingredients || [], steps:p.steps || [], diff:p.diff || 0, tools:p.tools || [], maker:p.maker || '', style:p.style || '', abv:p.abv ?? null, where_buy:p.where || '',
   twist:p.twist || '', remake_of:p.remakeOf || null, root_id:p.rootId, from_twist:p.fromTwist || null, edited_at:p.editedAt ? new Date(p.editedAt).toISOString() : null});
 async function reloadTribe(){
@@ -188,6 +188,18 @@ async function signUrls(paths){
   }
   for (const k in S.urls) if (S.urls[k].exp < Date.now()) delete S.urls[k];
   store.set(URLS_KEY, S.urls);
+}
+// Copie d'un nouveau post dans une autre tribu : nouvelles photos dans le dossier de cette tribu.
+async function copyToTribe(p, tribeId){
+  const id = uid(), paths = [];
+  for (let i = 0; i < C.photos.length && paths.length < 3; i++){
+    const path = `${tribeId}/${id}/${uid()}.jpg`;
+    const r = await S.sb.storage.from('photos').upload(path, C.blobs[i] || dataToBlob(C.photos[i]), {contentType:'image/jpeg', upsert:false});
+    if (r.error) throw {code:'upload'};
+    paths.push(path);
+  }
+  const r = await S.sb.from('posts').insert(toRow({...p, id, rootId:id, remakeOf:null, fromTwist:null, twist:'', editedAt:null, photoPaths:paths}, tribeId));
+  if (r.error) throw {code:'db'};
 }
 async function uploadPhotos(postId){
   const out = [];
@@ -551,7 +563,7 @@ function drawTools(){
 function sauceUI(){ const on = $('#cSauceOn').checked; $('#fTwist').style.display = on ? '' : 'none'; }
 function openCompose(remakeRoot, editId, variantId){
   if (S.mode === 'sb' && !S.tribe){ showGate('tribe'); return; }
-  Object.assign(C, {photos:[], blobs:[], paths:[], kind:'plat', gout:0, diff:0, remake:null, edit:null, variant:null, tools:[]});
+  Object.assign(C, {alsoTribes:[], photos:[], blobs:[], paths:[], kind:'plat', gout:0, diff:0, remake:null, edit:null, variant:null, tools:[]});
   $('#cSauceOn').checked = false; $('#cTwist').value = '';
   ['#cName','#cDesc','#cSrc','#cPort','#cMin','#cIng','#cSteps','#pMaker','#pStyle','#pAbv','#pWhere'].forEach(s => $(s).value = ''); $('#labMsg').textContent = 'Prends la bouteille ou l’étiquette en photo : l’IA remplit le nom, le producteur, le style et le degré.';
   $('#cErr').textContent = ''; $('#aiMsg').textContent = ''; $('#cRemake').style.display = 'none';
@@ -575,6 +587,11 @@ function openCompose(remakeRoot, editId, variantId){
   $('#cTitle').textContent = C.edit ? 'Modifier' : C.remake ? (C.kind === 'trouvaille' ? 'Je l’ai goûté' : 'Je l’ai refait') : 'Nouveau plat';
   const lockKind = C.remake || (C.edit && S.posts.some(x => x.rootId === C.edit.id && x.id !== C.edit.id));
   $('#aiBox').style.display = C.remake ? 'none' : ''; $('#prodBox').style.display = C.remake ? 'none' : ''; $('#cKind').style.display = lockKind ? 'none' : '';
+  const others = S.mode === 'sb' && !C.remake && !C.edit ? S.tribes.filter(t => !S.tribe || t.id !== S.tribe.id) : [];
+  C.alsoTribes = (C.alsoTribes || []).filter(id => others.some(t => t.id === id));
+  $('#alsoBox').style.display = others.length ? '' : 'none';
+  $('#alsoList').innerHTML = others.map(t => `<button type="button" class="chip" data-also="${t.id}" aria-pressed="${C.alsoTribes.includes(t.id)}">${C.alsoTribes.includes(t.id) ? '✓ ' : ''}${esc(t.name)}</button>`).join('');
+  $('#alsoHint').textContent = S.tribe ? `Toujours publié dans « ${S.tribe.name} ». Chaque tribu cochée reçoit sa propre copie, avec ses refaits, envies et commentaires.` : '';
   $('#sauceBox').style.display = (C.remake && C.kind !== 'trouvaille') ? 'flex' : 'none'; sauceUI();
   applyKind();
   rateUI($('#rGout'), $('#rGoutL'), 'gout', GOUT); rateUI($('#rDiff'), $('#rDiffL'), 'diff', DIFF);
@@ -703,7 +720,11 @@ async function sendPost(){
   const wasEdit = !!C.edit;
   try { if (S.mode === 'sb'){ const old = (C.edit && C.edit.photoPaths) || []; p.photoPaths = await uploadPhotos(id); p.photos = C.photos.slice(0, 3);
       const gone = old.filter(x => !p.photoPaths.includes(x)); if (gone.length) S.sb.storage.from('photos').remove(gone); }
-    await savePost(p); $('#compose').classList.remove('on'); if (wasEdit){ toast('Modifications enregistrées.'); openDetail(p.id); return; } toast(C.remake ? (prod ? 'Ton avis est ajouté !' : p.twist ? 'Ta version à ta sauce est partagée !' : 'Bravo, c’est ajouté à la recette de la tribu !') : 'Publié dans le carnet !'); show('fil'); }
+    await savePost(p);
+    const also = (S.mode === 'sb' && !C.remake && !wasEdit) ? (C.alsoTribes || []) : [];
+    let copied = 0; for (const t of also){ try { await copyToTribe(p, t); copied++; } catch(err){} }
+    if (also.length && copied < also.length) toast('Publié ici, mais la copie dans une autre tribu a échoué : réessaie depuis cette tribu.');
+    $('#compose').classList.remove('on'); if (wasEdit){ toast('Modifications enregistrées.'); openDetail(p.id); return; } toast(C.remake ? (prod ? 'Ton avis est ajouté !' : p.twist ? 'Ta version à ta sauce est partagée !' : 'Bravo, c’est ajouté à la recette de la tribu !') : also.length && copied === also.length ? `Publié dans ${also.length + 1} tribus !` : 'Publié dans le carnet !'); show('fil'); }
   catch(e){ $('#cErr').textContent = e && e.code === 'upload' ? 'Une photo n’a pas pu être envoyée : vérifie ta connexion et réessaie.' : 'Publication impossible : vérifie ta connexion et réessaie.'; }
   finally { $('#cSend').disabled = false; $('#cSend').textContent = C.edit ? 'Enregistrer les modifications' : 'Publier dans le carnet'; }
 }
@@ -720,6 +741,7 @@ document.addEventListener('click', async e => {
   const o = e.target.closest('[data-open]'); if (o){ openDetail(o.dataset.open); return; }
   const ed = e.target.closest('[data-edit]'); if (ed){ closeDetail(); openCompose(null, ed.dataset.edit); return; }
   const r = e.target.closest('[data-remake]'); if (r){ closeDetail(); openCompose(r.dataset.remake, null, r.dataset.variant || null); return; }
+  const al = e.target.closest('[data-also]'); if (al){ const id = al.dataset.also; C.alsoTribes = C.alsoTribes.includes(id) ? C.alsoTribes.filter(x => x !== id) : [...C.alsoTribes, id]; al.setAttribute('aria-pressed', C.alsoTribes.includes(id)); al.textContent = (C.alsoTribes.includes(id) ? '✓ ' : '') + (S.tribes.find(t => t.id === id) || {}).name; return; }
   const w = e.target.closest('[data-want]'); if (w){ toggleWant(w.dataset.want); return; }
   const tb = e.target.closest('[data-tribe]'); if (tb){ const t = S.tribes.find(x => x.id === tb.dataset.tribe); if (t){ await enterTribe(t); show('fil'); } return; }
   if (e.target.closest('#invShare')){ const link = inviteLink(S.tribe.invite_code), text = `Rejoins notre carnet de recettes « ${S.tribe.name} » sur Tablée :`; if (navigator.share){ try { await navigator.share({title:'Tablée', text, url:link}); } catch(err){} } else { try { await navigator.clipboard.writeText(text + ' ' + link); toast('Lien copié : colle-le dans un message.'); } catch(err){ $('#invLink').select(); } } return; }

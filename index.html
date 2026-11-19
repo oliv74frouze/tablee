@@ -62,6 +62,7 @@ main{padding:14px 16px 0;display:flex;flex-direction:column;gap:14px}
 
 /* filtres */
 .chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .chip{border:1px solid var(--line);background:var(--card);border-radius:99px;padding:7px 14px;font-size:14px;font-weight:600;white-space:nowrap}
 .chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 
@@ -388,6 +389,7 @@ button.mode{cursor:pointer;border:0;font:inherit;max-width:46vw;white-space:nowr
     <div class="fld rec-only" id="fTools"><span class="lbl">Ustensiles</span><div class="tgrid" id="cTools" role="group" aria-label="Ustensiles utilisés"></div></div>
     <div class="fld rec-only" id="fDiff"><span class="lbl">Difficulté</span><div class="rate diff" id="rDiff" role="group" aria-label="Difficulté sur 5"></div><div class="rlab" id="rDiffL"></div></div>
     <p class="hint" id="noteHint"></p>
+    <div class="fld" id="alsoBox" style="display:none"><span class="lbl">Publier aussi dans</span><div class="chips" id="alsoList"></div><p class="hint" id="alsoHint"></p></div>
     <p class="err" id="cErr"></p>
     <button class="btn pri wide" id="cSend" style="margin-top:12px;min-height:52px">Publier dans le carnet</button>
   </div>
