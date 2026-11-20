@@ -2,7 +2,7 @@
 /* ================= utilitaires ================= */
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const COLORS = ['#2349c4','#d98a16','#147a4a','#b8322a','#7a3fb8','#0f7c8c','#a8521b','#3d5a80'];
+const COLORS = ['#b4461f','#d98a16','#147a4a','#b8322a','#7a3fb8','#0f7c8c','#a8521b','#3d5a80'];
 const colorFor = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; };
 const fmt1 = x => (Math.round(x * 10) / 10).toLocaleString('fr-FR', {minimumFractionDigits: 1, maximumFractionDigits: 1});
 const ago = t => { const s = (Date.now() - t) / 1000; if (s < 60) return "à l'instant"; if (s < 3600) return `il y a ${Math.floor(s/60)} min`; if (s < 86400) return `il y a ${Math.floor(s/3600)} h`; if (s < 86400*7) return `il y a ${Math.floor(s/86400)} j`; return new Date(t).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}); };
