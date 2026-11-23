@@ -283,6 +283,47 @@ create policy "mon avatar supprimé" on storage.objects for delete
   using (bucket_id = 'avatars' and owner = auth.uid());
 
 -- =====================================================================
+--  Notifications sur le téléphone (ajouté le 23 nov.)
+--  Un abonnement par appareil ; la fonction « push » envoie un message aux autres
+--  membres de la tribu quand quelqu'un publie.
+-- =====================================================================
+alter table public.posts add column if not exists notified_at timestamptz;
+create table if not exists public.push_subs (
+  endpoint   text primary key check (char_length(endpoint) < 1000),
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  p256dh     text not null check (char_length(p256dh) < 200),
+  auth       text not null check (char_length(auth) < 100),
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subs_user_idx on public.push_subs(user_id);
+alter table public.push_subs enable row level security;
+drop policy if exists "mes appareils" on public.push_subs;
+create policy "mes appareils" on public.push_subs for select using (user_id = auth.uid());
+revoke all on public.push_subs from anon, authenticated;
+grant select on public.push_subs to authenticated;
+
+-- Enregistrer / retirer l'appareil de la personne connectée (un téléphone peut changer de compte).
+create or replace function public.save_push_sub(ep text, k text, a text) returns void
+language sql security definer set search_path = public as $$
+  insert into public.push_subs (endpoint, user_id, p256dh, auth) values (ep, auth.uid(), k, a)
+  on conflict (endpoint) do update set user_id = auth.uid(), p256dh = excluded.p256dh, auth = excluded.auth, created_at = now();
+$$;
+create or replace function public.drop_push_sub(ep text) returns void
+language sql security definer set search_path = public as $$
+  delete from public.push_subs where endpoint = ep and user_id = auth.uid();
+$$;
+revoke execute on function public.save_push_sub(text, text, text), public.drop_push_sub(text) from public, anon;
+grant execute on function public.save_push_sub(text, text, text), public.drop_push_sub(text) to authenticated;
+
+-- Clés de l'appli pour les notifications (créées par la fonction « push ») : illisibles depuis l'appli.
+create table if not exists public.app_keys (name text primary key, value text not null);
+alter table public.app_keys enable row level security;
+revoke all on public.app_keys from anon, authenticated;
+-- La fonction « push » agit avec le rôle de service de Supabase : elle doit pouvoir lire et écrire ces tables.
+grant usage on schema public to service_role;
+grant select, insert, update, delete on all tables in schema public to service_role;
+
+-- =====================================================================
 --  Temps réel : le fil se met à jour tout seul
 -- =====================================================================
 do $$ begin

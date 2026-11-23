@@ -5,5 +5,7 @@ window.TABLEE_CONFIG = {
   supabaseUrl: 'https://hnhqrnalfbbjwobglokp.supabase.co',
   supabaseAnonKey: 'sb_publishable_OjKuazbbbONjqYmPWh8mHQ_RP8fdZRU',
   // Adresse de la fonction IA dans Supabase (fin de son URL : …/functions/v1/quick-api).
-  aiFunction: 'quick-api'
+  aiFunction: 'quick-api',
+  // Adresse de la fonction des notifications (fin de son URL dans Supabase › Edge Functions).
+  pushFunction: 'push'
 };

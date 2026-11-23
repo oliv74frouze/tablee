@@ -58,6 +58,16 @@ Le service d'e-mails gratuit de Supabase est très limité. Pour que tes proches
 
 Pense aussi à fixer un **plafond de dépenses** mensuel dans la console Anthropic.
 
+### 3 bis. Notifications (facultatif)
+
+1. Supabase › **Edge Functions** › **Deploy a new function** › **Via editor**. Nomme-la exactement `push` (vérifie que son adresse se termine par `/functions/v1/push`).
+2. Colle le contenu de `supabase/functions/push/index.ts`, puis **Deploy**.
+3. Dans ses **Settings**, désactive **Verify JWT** et enregistre.
+4. Aucun secret à ajouter : les clés de notification sont créées toutes seules au premier usage.
+5. Si l'adresse de la fonction ne se termine pas par `push`, mets sa fin dans `config.js` (`pushFunction`).
+
+Chaque membre active ensuite les notifications dans **Moi › Notifications**. Sur iPhone, il faut d'abord installer Tablée sur l'écran d'accueil (iOS 16.4 ou plus récent).
+
 ### 4. Mise en ligne
 
 Sur GitHub, ouvre le dépôt **tablee**, puis **Settings**, puis **Pages**. Dans **Build and deployment**, choisis la source **Deploy from a branch**, la branche **main** et le dossier **/ (root)**, puis enregistre.

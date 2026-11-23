@@ -1,5 +1,5 @@
 // Version de l'appli : si la page (index.html) est plus ancienne que ce script, on recharge une fois.
-const BUILD = '8';
+const BUILD = '9';
 if (document.documentElement.dataset.build !== BUILD){ try { if (sessionStorage.getItem('tablee_rl') !== BUILD){ sessionStorage.setItem('tablee_rl', BUILD); location.reload(); } } catch(e){} }
 'use strict';
 /* ================= utilitaires ================= */
@@ -120,6 +120,7 @@ async function afterLogin(user){
   const want = store.get('tablee_tribe', null), t = S.tribes.find(x => x.id === want) || S.tribes[0];
   if (t) await enterTribe(t); else { showGate('tribe'); if (S.tribesErr) $('#tErr').textContent = 'Lecture des tribus impossible : ' + S.tribesErr; }
   loadUserData();
+  refreshPush(); if (PENDING_POST){ const id = PENDING_POST; PENDING_POST = null; openFromNotif(id); }
 }
 async function loadTribes(){
   const r = await S.sb.from('members').select('role, tribes(id, name, invite_code)').eq('user_id', S.me);
@@ -218,6 +219,7 @@ async function copyToTribe(p, tribeId){
   }
   const r = await S.sb.from('posts').insert(toRow({...p, id, rootId:id, remakeOf:null, fromTwist:null, twist:'', editedAt:null, photoPaths:paths}, tribeId));
   if (r.error) throw {code:'db'};
+  return id;
 }
 async function uploadPhotos(postId){
   const out = [];
@@ -404,7 +406,7 @@ async function saveProfile(){
 }
 
 function renderInvite(){
-  renderImport(); renderProfile();
+  renderImport(); renderProfile(); renderPush();
   const box = $('#howto'); if (!box) return;
   if (S.mode !== 'sb' || !S.tribe){ box.innerHTML = `<h2>Mode démo</h2><p class="hint">Ce carnet de démonstration reste dans ce navigateur. Pour partager avec ta tribu, l’application doit être reliée à Supabase (voir le guide d’installation).</p>`; return; }
   const link = inviteLink(S.tribe.invite_code), admin = S.tribe.role === 'admin';
@@ -904,12 +906,79 @@ async function sendPost(){
       const gone = old.filter(x => !p.photoPaths.includes(x)); if (gone.length) S.sb.storage.from('photos').remove(gone); }
     await savePost(p);
     const also = (S.mode === 'sb' && !C.remake && !wasEdit) ? (C.alsoTribes || []) : [];
-    let copied = 0; for (const t of also){ try { await copyToTribe(p, t); copied++; } catch(err){} }
+    let copied = 0; const newIds = wasEdit ? [] : [p.id]; for (const t of also){ try { newIds.push(await copyToTribe(p, t)); copied++; } catch(err){} }
+    if (newIds.length) notifyTribe(newIds);
     if (also.length && copied < also.length) toast('Publié ici, mais la copie dans une autre tribu a échoué : réessaie depuis cette tribu.');
     $('#compose').classList.remove('on'); if (wasEdit){ toast('Modifications enregistrées.'); openDetail(p.id); return; } toast(C.remake ? (prod ? 'Ton avis est ajouté !' : p.twist ? 'Ta version à ta sauce est partagée !' : 'Bravo, c’est ajouté à la recette de la tribu !') : also.length && copied === also.length ? `Publié dans ${also.length + 1} tribus !` : 'Publié dans le carnet !'); show('fil'); }
   catch(e){ $('#cErr').textContent = e && e.code === 'upload' ? 'Une photo n’a pas pu être envoyée : vérifie ta connexion et réessaie.' : 'Publication impossible : vérifie ta connexion et réessaie.'; }
   finally { $('#cSend').disabled = false; $('#cSend').textContent = C.edit ? 'Enregistrer les modifications' : 'Publier dans le carnet'; }
 }
+
+/* ================= notifications sur le téléphone ================= */
+let PENDING_POST = (location.search.match(/[?&]post=([0-9a-f-]{36})/i) || [])[1] || null;
+if (PENDING_POST) try { history.replaceState(null, '', location.pathname + location.hash); } catch(e){}
+const pushOK = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+async function pushFn(body){
+  const {data} = await S.sb.auth.getSession(); const token = data && data.session && data.session.access_token;
+  const r = await fetch(CFG.supabaseUrl + '/functions/v1/' + (CFG.pushFunction || 'push'), {method:'POST',
+    headers:{'Authorization':'Bearer ' + token, 'apikey':CFG.supabaseAnonKey, 'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const out = await r.json().catch(() => ({})); if (!r.ok || out.error) throw new Error(out.error || ('HTTP ' + r.status)); return out;
+}
+const b64ToBytes = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0));
+async function currentSub(){ try { const reg = await navigator.serviceWorker.getRegistration(); return reg ? await reg.pushManager.getSubscription() : null; } catch(e){ return null; } }
+async function saveSub(sub){ const j = sub.toJSON(); const r = await S.sb.rpc('save_push_sub', {ep:j.endpoint, k:j.keys.p256dh, a:j.keys.auth}); if (r.error) throw r.error; }
+let PUSH_ON = false;
+async function refreshPush(){
+  if (S.mode !== 'sb' || !pushOK()) { renderPush(); return; }
+  const sub = Notification.permission === 'granted' ? await currentSub() : null;
+  PUSH_ON = !!sub; if (sub) saveSub(sub).catch(() => {});   // rattache l'appareil au compte connecté
+  renderPush();
+}
+function renderPush(msg){
+  const box = $('#pushBox'); if (!box) return;
+  if (S.mode !== 'sb'){ box.style.display = 'none'; return; } box.style.display = '';
+  let inner;
+  if (!pushOK()) inner = isIOS && !standalone()
+    ? '<p class="hint">Sur iPhone, les notifications marchent seulement depuis l’appli installée : dans Safari, touche <b>Partager › Sur l’écran d’accueil</b>, puis ouvre Tablée depuis cette icône et reviens ici.</p>'
+    : '<p class="hint">Ce navigateur ne permet pas les notifications. Essaie avec Chrome (Android) ou l’appli installée sur l’écran d’accueil.</p>';
+  else if (Notification.permission === 'denied') inner = '<p class="hint">Les notifications sont bloquées pour Tablée. Autorise-les dans les réglages du téléphone (Notifications › Tablée, ou les réglages du site dans le navigateur), puis reviens ici.</p>';
+  else if (PUSH_ON) inner = '<p class="hint">✓ Activées sur cet appareil : tu es prévenu quand quelqu’un de tes tribus publie ou refait une recette.</p><div class="bar"><button class="btn" id="pushOff" style="flex:1">Désactiver sur cet appareil</button><button class="btn ghost" id="pushTest">M’envoyer un test</button></div>';
+  else inner = '<p class="hint">Sois prévenu quand quelqu’un de tes tribus publie ou refait une recette.</p><button class="btn pri" id="pushOn" style="width:100%">Activer les notifications</button>';
+  box.innerHTML = `<h2>Notifications</h2>${inner}${msg ? `<p class="hint" id="pushMsg">${esc(msg)}</p>` : ''}`;
+}
+async function enablePush(){
+  const b = $('#pushOn'); if (b){ b.disabled = true; b.textContent = 'Activation…'; }
+  try {
+    const perm = await Notification.requestPermission(); if (perm !== 'granted'){ renderPush(perm === 'denied' ? '' : 'Autorisation non donnée : réessaie quand tu veux.'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub){ const {key} = await pushFn({action:'key'}); sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ToBytes(key)}); }
+    await saveSub(sub); PUSH_ON = true; renderPush('C’est activé !');
+  } catch(e){ console.error(e); renderPush('Activation impossible : ' + ((e && e.message) || e) + '. Vérifie que la fonction « push » est installée dans Supabase.'); }
+}
+async function disablePush(){
+  const sub = await currentSub();
+  if (sub){ try { await S.sb.rpc('drop_push_sub', {ep:sub.endpoint}); } catch(e){} try { await sub.unsubscribe(); } catch(e){} }
+  PUSH_ON = false; renderPush('Désactivées sur cet appareil.');
+}
+function notifyTribe(ids){ if (S.mode === 'sb') pushFn({action:'notify', posts:ids}).catch(e => console.warn('notification non envoyée', e)); }
+async function openFromNotif(id){
+  if (S.mode !== 'sb') return;
+  if (!S.posts.some(p => p.id === id)){
+    const r = await S.sb.from('posts').select('tribe_id').eq('id', id).maybeSingle();
+    const t = r.data && S.tribes.find(x => x.id === r.data.tribe_id);
+    if (t && (!S.tribe || S.tribe.id !== t.id)) await enterTribe(t);
+  }
+  if (S.posts.some(p => p.id === id)){ show('fil'); openDetail(id); }
+}
+document.addEventListener('click', e => {
+  if (e.target.closest('#pushOn')) enablePush();
+  else if (e.target.closest('#pushOff')) disablePush();
+  else if (e.target.closest('#pushTest')) (async () => { const reg = await navigator.serviceWorker.ready; reg.showNotification(S.tribe ? S.tribe.name : 'Tablée', {body:'Voilà à quoi ressemblera une notification de Tablée.', icon:'icons/icon-192.png', badge:'icons/badge-96.png'}); })();
+});
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.openPost) openFromNotif(e.data.openPost); });
 
 /* ================= navigation & événements ================= */
 function show(v){ $$('.view').forEach(e => e.classList.toggle('on', e.id === 'v-' + v)); $$('nav [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === v)); window.scrollTo(0, 0); try { history.replaceState(null, '', '#' + v); } catch(e){} }

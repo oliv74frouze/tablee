@@ -91,6 +91,8 @@
       if (name === 'join_tribe'){ const t = db.tribes.find(x => x.invite_code === args.code); if (!t) return {data:null, error:{message:'invalid_code'}};
         if (!db.members.find(m => m.tribe_id === t.id && m.user_id === me())) db.members.push({tribe_id:t.id, user_id:me(), role:'member'}); save(); return {data:t.id, error:null}; }
       if (name === 'reset_invite'){ const t = db.tribes.find(x => x.id === args.t); t.invite_code = Math.random().toString(16).slice(2, 18); save(); return {data:t.invite_code, error:null}; }
+      if (name === 'save_push_sub'){ db.push_subs = (db.push_subs || []).filter(x => x.endpoint !== args.ep); db.push_subs.push({endpoint:args.ep, user_id:me(), p256dh:args.k, auth:args.a}); save(); return {data:null, error:null}; }
+      if (name === 'drop_push_sub'){ db.push_subs = (db.push_subs || []).filter(x => !(x.endpoint === args.ep && x.user_id === me())); save(); return {data:null, error:null}; }
       return {data:null, error:{message:'unknown rpc'}};
     },
     storage: { from(){ return {
