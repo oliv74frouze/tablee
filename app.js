@@ -765,7 +765,7 @@ async function callAI(mode, {name = '', kind = 'plat', blobs = []} = {}){
   // Photos réduites pour l'IA (1024 px suffisent) : envoi plus rapide, même sur une connexion mobile faible.
   const images = [];
   for (const b of blobs.filter(Boolean).slice(0, 3)){ let x = b; try { x = (await resize(b, 1024, 0.8)).blob; } catch(e){} images.push(await blobToB64(x)); }
-  const send = () => fetch(CFG.supabaseUrl + '/functions/v1/ai', {method:'POST', signal:aiCtl ? aiCtl.signal : undefined,
+  const send = () => fetch(CFG.supabaseUrl + '/functions/v1/' + (CFG.aiFunction || 'ai'), {method:'POST', signal:aiCtl ? aiCtl.signal : undefined,
       headers:{'Authorization':'Bearer ' + token, 'apikey':CFG.supabaseAnonKey, 'Content-Type':'application/json'}, body:JSON.stringify({mode, name, kind, images})});
   let res;
   for (let k = 0; ; k++){
