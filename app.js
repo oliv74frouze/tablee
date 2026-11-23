@@ -762,13 +762,25 @@ const blobToB64 = b => new Promise((res, rej) => { const r = new FileReader(); r
 async function callAI(mode, {name = '', kind = 'plat', blobs = []} = {}){
   const {data} = await S.sb.auth.getSession(); const token = data && data.session && data.session.access_token;
   if (!token) throw {code:'not_authenticated'};
-  const images = []; for (const b of blobs.filter(Boolean).slice(0, 3)) images.push(await blobToB64(b));
+  // Photos réduites pour l'IA (1024 px suffisent) : envoi plus rapide, même sur une connexion mobile faible.
+  const images = [];
+  for (const b of blobs.filter(Boolean).slice(0, 3)){ let x = b; try { x = (await resize(b, 1024, 0.8)).blob; } catch(e){} images.push(await blobToB64(x)); }
+  const send = () => fetch(CFG.supabaseUrl + '/functions/v1/ai', {method:'POST', signal:aiCtl ? aiCtl.signal : undefined,
+      headers:{'Authorization':'Bearer ' + token, 'apikey':CFG.supabaseAnonKey, 'Content-Type':'application/json'}, body:JSON.stringify({mode, name, kind, images})});
   let res;
-  try { res = await fetch(CFG.supabaseUrl + '/functions/v1/ai', {method:'POST', signal:aiCtl ? aiCtl.signal : undefined,
-      headers:{'Authorization':'Bearer ' + token, 'apikey':CFG.supabaseAnonKey, 'Content-Type':'application/json'}, body:JSON.stringify({mode, name, kind, images})}); }
-  catch(e){ throw {code:e && e.name === 'AbortError' ? 'cancelled' : 'network'}; }
+  for (let k = 0; ; k++){
+    try { res = await send(); break; }
+    catch(e){
+      if (e && e.name === 'AbortError') throw {code:'cancelled'};
+      if (k === 0 && navigator.onLine !== false){ await new Promise(r => setTimeout(r, 1500)); continue; }  // une seconde chance
+      if (navigator.onLine === false) throw {code:'network'};
+      // Internet marche (on joint Supabase) mais la fonction IA ne répond pas correctement.
+      let reach = false; try { await fetch(CFG.supabaseUrl + '/auth/v1/health', {headers:{apikey:CFG.supabaseAnonKey}}); reach = true; } catch(e2){}
+      console.error('IA injoignable', e); throw {code:reach ? 'unreachable' : 'network'};
+    }
+  }
   let out = {}; try { out = await res.json(); } catch(e){}
-  if (!res.ok || out.error) throw {code:out.error || 'upstream', limit:out.limit};
+  if (!res.ok || out.error) throw {code:out.error || (res.status === 413 ? 'too_big' : 'upstream'), limit:out.limit};
   if (out.remaining != null && out.remaining <= 5) setTimeout(() => toast(`Plus que ${out.remaining} pré-saisie${out.remaining > 1 ? 's' : ''} IA ce mois-ci.`), 1500);
   return out.result;
 }
@@ -787,7 +799,8 @@ function fillFromAI(r, overwrite){
 }
 const AI_ERR = {cancelled:'Lecture arrêtée.', rate_limited:'Trop de demandes pour le moment : réessaie dans un instant.', quota:'Tu as utilisé toutes tes pré-saisies IA du mois : remplis la recette à la main, le compteur repart le 1er du mois.',
   image_rejected:'La photo n’a pas pu être lue : essaie une image plus nette (JPEG ou PNG).', invalid_json:'La réponse de l’IA était incomplète : réessaie.', not_configured:'L’IA n’est pas encore activée sur ce carnet (clé à ajouter dans Supabase).',
-  network:'Pas de connexion internet : réessaie.', not_authenticated:'Reconnecte-toi pour utiliser l’IA.', image_required:'Ajoute d’abord une photo.'};
+  network:'Pas de connexion internet : réessaie quand le réseau revient. Ta photo est bien ajoutée.',
+  unreachable:'L’IA ne répond pas pour le moment. Ta photo est bien ajoutée : tu peux publier et remplir la recette à la main.', too_big:'Photo trop lourde pour l’IA : essaie avec une seule photo.', upstream:'L’IA n’a pas pu répondre : réessaie dans un instant. Ta photo est bien ajoutée.', server:'L’IA a rencontré un problème : réessaie dans un instant. Ta photo est bien ajoutée.', not_authenticated:'Reconnecte-toi pour utiliser l’IA.', image_required:'Ajoute d’abord une photo.'};
 async function readRecipe(files){
   if (!AI_ON){ $('#aiMsg').textContent = 'La lecture par l’IA fonctionne dans la version connectée de Tablée.'; return; }
   const blobs = [];

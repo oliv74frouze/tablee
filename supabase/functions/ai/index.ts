@@ -43,6 +43,13 @@ function extractJson(text: string): unknown {
 }
 
 Deno.serve(async (req) => {
+  // Toute erreur imprévue renvoie une réponse lisible par l'appli (avec les en-têtes CORS),
+  // sinon le navigateur l'affiche comme une coupure d'internet.
+  try { return await handle(req); }
+  catch (e) { console.error("ai", e); return json({ error: "server" }, 500); }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "method" }, 405);
 
@@ -95,4 +102,4 @@ Deno.serve(async (req) => {
   try { result = extractJson(text); } catch { return json({ error: "invalid_json" }, 502); }
 
   return json({ result, remaining: Math.max(0, limit - Number(used)) });
-});
+}
