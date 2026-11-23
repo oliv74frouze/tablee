@@ -47,7 +47,7 @@ const EXAMPLES = [
 /* ================= stockage : Supabase (tribu) ou mode démo local ================= */
 const CFG = window.TABLEE_CONFIG || {};
 const DEMO = !CFG.supabaseUrl || !CFG.supabaseAnonKey || /[?&]demo\b/.test(location.search);
-const S = { mode:'local', sb:null, me:'moi', canWrite:true, tribe:null, tribes:[], members:[], posts:[], names:{}, cart:[], wants:{}, kitchen:[], unsubC:null, urls:{} };
+const S = { mode:'local', sb:null, me:'moi', canWrite:true, tribe:null, tribes:[], members:[], posts:[], names:{}, cart:[], wants:{}, kitchen:[], unsubC:null, urls:{}, avatars:{} };
 const LS = 'tablee_v1';
 const local = { read(){ try{ return JSON.parse(localStorage.getItem(LS)) || {posts:[], comments:{}, cart:[]}; }catch(e){ return {posts:[], comments:{}, cart:[]}; } },
                 write(d){ try{ localStorage.setItem(LS, JSON.stringify(d)); }catch(e){ toast('Stockage du navigateur plein : supprime des photos.'); } } };
@@ -109,6 +109,8 @@ async function doAuth(){
 }
 async function afterLogin(user){
   S.me = user.id; S.names[S.me] = (user.user_metadata && user.user_metadata.name) || '';
+  try { const pr = await S.sb.from('profiles').select('name, avatar').eq('id', S.me).maybeSingle();
+    if (pr.data){ S.names[S.me] = pr.data.name || S.names[S.me]; S.avatars[S.me] = pr.data.avatar || ''; await signUrls([S.avatars[S.me]], 'avatars'); } } catch(e){}
   const code = pendingJoin();
   if (code){ try { const r = await S.sb.rpc('join_tribe', {code}); if (!r.error){ store.set('tablee_tribe', r.data); toast('Bienvenue dans la tribu !'); } else toast('Ce lien d’invitation ne marche plus : demande un nouveau lien.'); } catch(e){} try { sessionStorage.removeItem('tablee_join'); } catch(e){} }
   await loadTribes();
@@ -173,10 +175,11 @@ async function reloadTribe(){
   const [P, W, M] = await Promise.all([
     S.sb.from('posts').select('*').eq('tribe_id', T).order('created_at', {ascending:false}).limit(500),
     S.sb.from('wants').select('user_id, post_id').eq('tribe_id', T),
-    S.sb.from('members').select('user_id, role, profiles(name)').eq('tribe_id', T)]);
+    S.sb.from('members').select('user_id, role, joined_at, profiles(name, avatar)').eq('tribe_id', T)]);
   if (P.error){ $('#feed').innerHTML = '<p class="empty">Impossible de lire le carnet : vérifie ta connexion internet.</p>'; return; }
-  (M.data || []).forEach(m => { S.names[m.user_id] = (m.profiles && m.profiles.name) || ''; });
-  S.members = (M.data || []).map(m => ({id:m.user_id, role:m.role, name:(m.profiles && m.profiles.name) || ''}));
+  (M.data || []).forEach(m => { S.names[m.user_id] = (m.profiles && m.profiles.name) || ''; S.avatars[m.user_id] = (m.profiles && m.profiles.avatar) || ''; });
+  S.members = (M.data || []).map(m => ({id:m.user_id, role:m.role, joined:m.joined_at ? Date.parse(m.joined_at) : 0, name:(m.profiles && m.profiles.name) || ''}));
+  await signUrls(Object.values(S.avatars), 'avatars');
   const w = {}; (W.data || []).forEach(x => { (w[x.user_id] = w[x.user_id] || []).push(x.post_id); }); S.wants = w;
   await signUrls((P.data || []).flatMap(r => r.photos || []));
   S.posts = (P.data || []).map(fromRow);
@@ -187,12 +190,13 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && S.
 /* ---------- photos : stockage privé + adresses signées (gardées une semaine) ---------- */
 const URLS_KEY = 'tablee_urls', WEEK = 7 * 86400;
 S.urls = store.get(URLS_KEY, {});
-const urlOf = path => { const u = S.urls[path]; return u && u.exp > Date.now() + 3600e3 ? u.url : null; };
-async function signUrls(paths){
-  const need = [...new Set(paths)].filter(p => !urlOf(p)); if (!need.length) return;
+const ukey = (path, bucket) => bucket && bucket !== 'photos' ? bucket + ':' + path : path;
+const urlOf = (path, bucket) => { const u = S.urls[ukey(path, bucket)]; return u && u.exp > Date.now() + 3600e3 ? u.url : null; };
+async function signUrls(paths, bucket = 'photos'){
+  const need = [...new Set(paths)].filter(p => p && !urlOf(p, bucket)); if (!need.length) return;
   for (let i = 0; i < need.length; i += 100){
-    const r = await S.sb.storage.from('photos').createSignedUrls(need.slice(i, i + 100), WEEK);
-    (r.data || []).forEach(x => { if (x.signedUrl) S.urls[x.path] = {url:x.signedUrl, exp:Date.now() + WEEK * 1000}; });
+    const r = await S.sb.storage.from(bucket).createSignedUrls(need.slice(i, i + 100), WEEK);
+    (r.data || []).forEach(x => { if (x.signedUrl) S.urls[ukey(x.path, bucket)] = {url:x.signedUrl, exp:Date.now() + WEEK * 1000}; });
   }
   for (const k in S.urls) if (S.urls[k].exp < Date.now()) delete S.urls[k];
   store.set(URLS_KEY, S.urls);
@@ -253,6 +257,7 @@ function wantBtn(id, pr, full){
 }
 function refreshDetailWant(id){ $$('#dBody [data-want]').forEach(b => { b.outerHTML = wantBtn(b.dataset.want, b.closest('[data-pr]') ? true : false, true); }); }
 const nameOf = a => a === S.me ? 'Toi' : (S.mode === 'sb' ? (S.names[a] || 'Quelqu’un') : (a || 'Toi'));
+const LOCALPROF = () => store.get('tablee_profile', {name:'', avatar:''});
 
 async function savePost(p){
   if (S.mode === 'sb'){
@@ -330,16 +335,80 @@ async function runImport(){
   } catch(e){ console.error(e); msg(`Import interrompu après ${done} post(s) : ${(e && e.message) || e}. Relance-le : ce qui est déjà importé ne sera pas dupliqué.`); }
   finally { $('#impGo').disabled = false; }
 }
+function membersHtml(){
+  const L = S.members.slice().sort((a, b) => (a.id === S.me ? -1 : b.id === S.me ? 1 : 0) || (a.role === 'admin' ? -1 : b.role === 'admin' ? 1 : 0) || (a.joined - b.joined));
+  const MOIS = ['janv.', 'févr.', 'mars', 'avril', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  return `<div class="mbrs">${L.map(m => {
+    const P = S.posts.filter(p => p.author === m.id), rec = P.filter(p => !p.remakeOf).length, re = P.length - rec, d = m.joined ? new Date(m.joined) : null;
+    const bits = [rec ? `${rec} recette${rec > 1 ? 's' : ''}` : '', re ? `${re} refaite${re > 1 ? 's' : ''}` : '', d ? `depuis ${MOIS[d.getMonth()]} ${d.getFullYear()}` : ''].filter(Boolean);
+    return `<div class="mbr">${avatar(m.id, 'av lg')}<div><b>${esc(m.name || 'Sans surnom')}</b>${m.id === S.me ? ' <span class="hint">(toi)</span>' : ''}${m.role === 'admin' ? ' <span class="adm">a créé la tribu</span>' : ''}<br><span class="hint">${bits.join(' · ') || 'pas encore de post'}</span></div></div>`; }).join('')}</div>`;
+}
+
+/* ---------- Mon profil : surnom et petite photo, vus par la tribu ---------- */
+const PROF = {blob:null, data:null, remove:false, name:null};
+function cropSquare(file, size){
+  return new Promise((res, rej) => { const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => { const w = img.naturalWidth, h = img.naturalHeight, m = Math.min(w, h), c = document.createElement('canvas'); c.width = c.height = size;
+      c.getContext('2d').drawImage(img, (w - m) / 2, (h - m) / 2, m, m, 0, 0, size, size); URL.revokeObjectURL(url);
+      c.toBlob(b => b ? res({blob:b, data:c.toDataURL('image/jpeg', 0.85)}) : rej(new Error('photo')), 'image/jpeg', 0.85); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('photo')); }; img.src = url; });
+}
+function renderProfile(){
+  const box = $('#profBox'); if (!box) return;
+  const cur = PROF.remove ? null : (PROF.data || avUrl(S.me)), name = PROF.name ?? displayName(S.me);
+  const pic = cur ? `<span class="av xl img"><img src="${cur}" alt=""></span>` : `<span class="av xl" style="background:${colorFor(S.me)}">${esc(((name || '?')[0]).toUpperCase())}</span>`;
+  const keepVal = $('#profName') && document.activeElement === $('#profName');
+  if (keepVal){ $('#profPic').innerHTML = pic + '<span class="cam">Photo</span>'; paintPreview(); return; }
+  box.innerHTML = `<h2>Mon profil</h2>
+    <div class="prof"><button type="button" class="picbtn" id="profPic" aria-label="Changer ma photo">${pic}<span class="cam">Photo</span></button>
+      <div style="flex:1;min-width:0"><label class="lbl" for="profName">Mon surnom</label><input class="search" id="profName" maxlength="40" autocomplete="nickname" placeholder="Ex. Tonton Oliv" value="${esc(name)}"></div></div>
+    <input type="file" id="profFile" accept="image/*" hidden>
+    <div class="lbl">Ce que voit ta tribu</div><div class="prev" id="profPrev"></div>
+    <div class="bar"><button class="btn pri" id="profSave" style="flex:1">Enregistrer</button>${cur ? '<button class="btn ghost" id="profDel">Retirer la photo</button>' : ''}</div>
+    <p class="hint" id="profMsg"></p>`;
+  paintPreview();
+}
+function paintPreview(){
+  const el = $('#profPrev'); if (!el) return;
+  const cur = PROF.remove ? null : (PROF.data || avUrl(S.me)), name = ($('#profName') && $('#profName').value.trim()) || 'Sans surnom';
+  const pic = cur ? `<span class="av img"><img src="${cur}" alt=""></span>` : `<span class="av" style="background:${colorFor(S.me)}">${esc(name[0].toUpperCase())}</span>`;
+  el.innerHTML = `<div class="who">${pic}<div><div class="n">${esc(name)} <span style="font-weight:400;color:var(--muted)">a publié une recette</span></div><div class="t">à l’instant · Plat</div></div></div>`;
+}
+async function saveProfile(){
+  const name = $('#profName').value.trim().slice(0, 40), msg = t => { $('#profMsg').textContent = t; };
+  if (!name){ msg('Choisis un surnom.'); $('#profName').focus(); return; }
+  $('#profSave').disabled = true; msg('Enregistrement…');
+  try {
+    if (S.mode !== 'sb'){
+      const lp = LOCALPROF(); store.set('tablee_profile', {name, avatar:PROF.remove ? '' : (PROF.data || lp.avatar || '')});
+    } else {
+      const old = S.avatars[S.me] || ''; let path = old;
+      if (PROF.blob){ path = `${S.me}/${uid()}.jpg`; const u = await S.sb.storage.from('avatars').upload(path, PROF.blob, {contentType:'image/jpeg'}); if (u.error) throw u.error; }
+      else if (PROF.remove) path = '';
+      const r = await S.sb.from('profiles').update({name, avatar:path}).eq('id', S.me); if (r.error) throw r.error;
+      if (old && old !== path) S.sb.storage.from('avatars').remove([old]).catch(() => {});
+      S.names[S.me] = name; S.avatars[S.me] = path; if (path) await signUrls([path], 'avatars');
+      S.members = S.members.map(m => m.id === S.me ? {...m, name} : m);
+    }
+    PROF.blob = PROF.data = PROF.name = null; PROF.remove = false;
+    if (document.activeElement) document.activeElement.blur();
+    render(); renderInvite(); renderProfile(); msg('C’est enregistré : ta tribu te voit comme ça.');
+  } catch(e){ console.error(e); msg('Pas enregistré : ' + ((e && e.message) || e) + '. Réessaie.'); }
+  finally { const b = $('#profSave'); if (b) b.disabled = false; }
+}
+
 function renderInvite(){
-  renderImport();
+  renderImport(); renderProfile();
   const box = $('#howto'); if (!box) return;
   if (S.mode !== 'sb' || !S.tribe){ box.innerHTML = `<h2>Mode démo</h2><p class="hint">Ce carnet de démonstration reste dans ce navigateur. Pour partager avec ta tribu, l’application doit être reliée à Supabase (voir le guide d’installation).</p>`; return; }
   const link = inviteLink(S.tribe.invite_code), admin = S.tribe.role === 'admin';
   box.innerHTML = `<h2>Ta tribu : ${esc(S.tribe.name)}</h2>
+    <div class="lbl">${S.members.length} membre${S.members.length > 1 ? 's' : ''}</div>
+    ${membersHtml()}
+    <div class="lbl" style="margin-top:6px">Inviter quelqu’un</div>
     <p class="hint">Envoie ce lien à tes proches (famille, amis). Ils créent leur compte en 30 secondes et rejoignent le carnet.</p>
     <input class="search" id="invLink" readonly value="${esc(link)}" aria-label="Lien d’invitation">
     <div class="bar"><button class="btn pri" id="invShare" style="flex:1">Partager le lien</button><button class="btn" id="invCopy">Copier</button></div>
-    <p class="hint"><b>${S.members.length} membre${S.members.length > 1 ? 's' : ''} :</b> ${S.members.map(m => esc(m.id === S.me ? 'toi' : (m.name || 'Quelqu’un'))).join(', ')}</p>
     <div class="bar">${admin ? '<button class="btn" id="invReset" style="flex:1">Nouveau lien</button>' : ''}<button class="btn" id="tSwitch" style="flex:1">Changer de tribu</button><button class="btn ghost" id="logout" style="flex:1">Me déconnecter</button></div>
     ${admin ? '<p class="hint">« Nouveau lien » désactive l’ancien, si tu l’as envoyé à la mauvaise personne.</p>' : ''}`;
 }
@@ -367,7 +436,12 @@ const exGroup = p => { const m = p.exMakers || [];
 
 /* ================= rendu ================= */
 let feedK = 'all', bookK = 'all';
-function avatar(a){ const n = nameOf(a); return `<span class="av" style="background:${colorFor(a)}">${esc((n[0] || '?').toUpperCase())}</span>`; }
+// Petite photo de profil (ou initiale sur une pastille de couleur si la personne n'a pas mis de photo).
+const avUrl = a => S.mode === 'sb' ? (S.avatars[a] ? urlOf(S.avatars[a], 'avatars') : null) : (a === S.me ? LOCALPROF().avatar || null : null);
+const displayName = a => (S.mode === 'sb' ? S.names[a] : (a === S.me ? LOCALPROF().name : a)) || '';
+function avatar(a, cls = 'av'){ const u = avUrl(a), n = displayName(a) || nameOf(a);
+  return u ? `<span class="${cls} img"><img src="${u}" alt=""></span>` : `<span class="${cls}" style="background:${colorFor(a)}">${esc((n[0] || '?').toUpperCase())}</span>`; }
+const exAv = n => `<span class="av" style="background:${colorFor(n)}">${esc((n[0] || '?').toUpperCase())}</span>`;
 function photoBlock(p, cls='ph'){
   if (p.photos && p.photos.length) return `<div class="${cls}"><img src="${p.photos[0]}" alt="${esc(p.name)}" loading="lazy">${p.photos.length > 1 ? `<span class="more">+${p.photos.length-1}</span>` : ''}</div>`;
   return `<div class="${cls}" style="background:${colorFor(p.name)}"><span class="ph0">${esc((p.name||'?')[0])}</span></div>`;
@@ -405,10 +479,10 @@ function stackCard(g){
   const when = ex ? o.createdAt : latest.createdAt;
   const nm = a => ex ? a : nameOf(a);
   const ph = ex ? `<button style="all:unset;cursor:pointer;display:block;width:100%" data-open="${o.id}" aria-label="Voir ${esc(o.name)}">${photoBlock(o)}</button>` : carousel(g);
-  const madeLine = nRem ? `<div class="made"><span class="avs">${makers.slice(0, 4).map(a => `<span class="av" style="background:${colorFor(a)}">${esc((nm(a)[0] || '?').toUpperCase())}</span>`).join('')}</span>
+  const madeLine = nRem ? `<div class="made"><span class="avs">${makers.slice(0, 4).map(a => ex ? exAv(a) : avatar(a)).join('')}</span>
       <span>${pr ? 'Goûté' : 'Refait'} <b>${nRem} fois</b> par ${makers.slice(0, 2).map(a => esc(!ex && a === S.me ? 'toi' : nm(a))).join(' et ')}${makers.length > 2 ? ` et ${makers.length - 2} autre${makers.length > 3 ? 's' : ''}` : ''}</span></div>` : '';
   return `<article class="post ${nRem >= 2 ? 's2' : nRem === 1 ? 's1' : ''}" data-root="${o.id}"${pr ? ' data-pr="1"' : ''}>
-    <div class="who"><span class="av" style="background:${colorFor(actor)}">${esc((nm(actor)[0] || '?').toUpperCase())}</span><div><div class="n">${(!ex && actor === S.me) ? 'Tu' : esc(nm(actor))} <span style="font-weight:400;color:var(--muted)">${(!ex && actor === S.me) ? verb.replace(/^a /, '').replace(/^(\S+)/, w => ({refait:'as refait', goûté:'as goûté', partagé:'as partagé', publié:'as publié'}[w] || w)) : verb}${isRe ? (!ex && o.author === S.me ? (pr ? ' ta trouvaille' : ' ta recette') : ` ${pr ? 'la trouvaille' : 'la recette'} de ${esc(nm(o.author))}`) : ''}${twist ? ((!ex && actor === S.me) ? ' à ta sauce' : ' à sa sauce') : ''}</span></div><div class="t">${ago(when)} · <span class="kind">${KIND(o.kind)}</span></div></div>${ex ? '<span class="ex">Exemple</span>' : ''}</div>
+    <div class="who">${ex ? exAv(actor) : avatar(actor)}<div><div class="n">${(!ex && actor === S.me) ? 'Tu' : esc(nm(actor))} <span style="font-weight:400;color:var(--muted)">${(!ex && actor === S.me) ? verb.replace(/^a /, '').replace(/^(\S+)/, w => ({refait:'as refait', goûté:'as goûté', partagé:'as partagé', publié:'as publié'}[w] || w)) : verb}${isRe ? (!ex && o.author === S.me ? (pr ? ' ta trouvaille' : ' ta recette') : ` ${pr ? 'la trouvaille' : 'la recette'} de ${esc(nm(o.author))}`) : ''}${twist ? ((!ex && actor === S.me) ? ' à ta sauce' : ' à sa sauce') : ''}</span></div><div class="t">${ago(when)} · <span class="kind">${KIND(o.kind)}</span></div></div>${ex ? '<span class="ex">Exemple</span>' : ''}</div>
     ${ph}
     <div class="body"><div class="vhead"><h3>${esc(o.name)}</h3>${pr ? facts(o) : ''}${o.desc ? `<p class="desc">${esc(o.desc)}</p>` : ''}${twist ? `<div class="sauce"><span class="tg">${(!ex && actor === S.me) ? 'À ta sauce' : 'À sa sauce'}</span><span>${esc(twist)}</span></div>` : ''}</div>${scoresHtml(ex ? exGroup(o) : g, true)}${madeLine}
       <div class="acts"><button class="btn vbtn" data-open="${o.id}">${pr ? 'Voir' : 'Recette'}</button>${ex ? '' : `<button class="btn pri" data-remake="${o.id}">${pr ? 'Je l’ai goûté' : 'Je l’ai refait'}</button>${wantBtn(o.id, pr)}`}</div></div>
@@ -866,3 +940,16 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 
 render();
 initStore().then(initAI).catch(e => { console.error(e); $('#feed').innerHTML = '<p class="empty">Connexion au carnet impossible : vérifie ta connexion internet, puis recharge la page.</p>'; });
+/* ---------- Mon profil : événements ---------- */
+document.addEventListener('click', e => {
+  if (e.target.closest('#profPic')){ $('#profFile').click(); return; }
+  if (e.target.closest('#profSave')){ saveProfile(); return; }
+  if (e.target.closest('#profDel')){ PROF.remove = true; PROF.blob = PROF.data = null; renderProfile(); return; }
+});
+document.addEventListener('change', async e => {
+  if (e.target.id !== 'profFile' || !e.target.files[0]) return;
+  try { const r = await cropSquare(e.target.files[0], 320); PROF.blob = r.blob; PROF.data = r.data; PROF.remove = false; renderProfile(); $('#profMsg').textContent = 'Touche « Enregistrer » pour garder cette photo.'; }
+  catch(err){ toast('Cette photo ne s’ouvre pas : essaie-en une autre.'); }
+  e.target.value = '';
+});
+document.addEventListener('input', e => { if (e.target.id === 'profName'){ PROF.name = e.target.value; paintPreview(); const a = $('#profPic .av:not(.img)'); if (a) a.textContent = ((e.target.value.trim() || '?')[0]).toUpperCase(); } });

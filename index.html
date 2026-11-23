@@ -75,7 +75,15 @@ main{padding:14px 16px 0;display:flex;flex-direction:column;gap:14px}
 .made .avs{display:flex}.made .avs .av{width:26px;height:26px;font-size:11px;border:2px solid var(--card);margin-left:-8px}.made .avs .av:first-child{margin-left:0}
 .made b{color:var(--ink)}
 .post .who{display:flex;align-items:center;gap:10px;padding:12px 14px}
-.av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;color:#fff;flex:none}
+.av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;color:#fff;flex:none;overflow:hidden}
+.av.img{background:var(--soft)}.av img{width:100%;height:100%;object-fit:cover;display:block}
+.av.lg{width:44px;height:44px;font-size:17px}.av.xl{width:84px;height:84px;font-size:32px}
+.prof{display:flex;gap:14px;align-items:center}
+.picbtn{position:relative;border:0;background:none;padding:0;cursor:pointer;border-radius:50%;flex:none}
+.picbtn .cam{position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);background:var(--accent);color:var(--accent-ink);font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;border:2px solid var(--card)}
+.prev{border:1px dashed var(--line);border-radius:12px;padding:10px 12px}.prev .who{display:flex;align-items:center;gap:10px}
+.mbrs{display:flex;flex-direction:column;gap:10px}.mbr{display:flex;gap:12px;align-items:center;line-height:1.3}
+.adm{font-size:11px;font-weight:700;color:var(--accent);background:var(--soft);padding:1px 7px;border-radius:99px;white-space:nowrap}
 .who .n{font-weight:600;font-size:15px;line-height:1.2}.who .t{font-size:12px;color:var(--muted)}
 .ex{margin-left:auto;font-size:11px;font-weight:700;color:var(--saffron);border:1px solid var(--saffron);border-radius:99px;padding:2px 8px}
 .ph{position:relative;aspect-ratio:4/3;background:var(--soft);overflow:hidden}
@@ -316,6 +324,7 @@ button.mode{cursor:pointer;border:0;font:inherit;max-width:46vw;white-space:nowr
 
     <!-- MOI -->
     <section class="view" id="v-moi">
+      <div class="note" id="profBox"></div>
       <div class="stats" id="myStats"></div>
       <div class="note" id="howto"></div>
       <div class="note">

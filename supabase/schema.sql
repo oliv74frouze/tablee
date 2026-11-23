@@ -10,6 +10,8 @@ create table if not exists public.profiles (
   name       text not null default '' check (char_length(name) <= 40),
   created_at timestamptz not null default now()
 );
+-- Petite photo de profil (chemin dans le stockage « avatars »), ajoutée le 23 nov.
+alter table public.profiles add column if not exists avatar text not null default '' check (char_length(avatar) <= 200);
 
 -- Création automatique du profil à l'inscription (prénom saisi dans le formulaire).
 create or replace function public.handle_new_user() returns trigger
@@ -235,7 +237,7 @@ create policy "mes données" on public.user_data for all using (user_id = auth.u
 -- =====================================================================
 grant usage on schema public to anon, authenticated;
 grant select on public.profiles, public.tribes, public.members, public.posts, public.comments, public.wants to authenticated;
-grant update (name) on public.profiles to authenticated;
+grant update (name, avatar) on public.profiles to authenticated;
 grant update (name) on public.tribes to authenticated;
 grant delete on public.members to authenticated;
 grant insert, update, delete on public.posts, public.comments to authenticated;
@@ -260,6 +262,25 @@ create policy "photos ajoutées par un membre" on storage.objects for insert
 drop policy if exists "photos supprimées par leur auteur" on storage.objects;
 create policy "photos supprimées par leur auteur" on storage.objects for delete
   using (bucket_id = 'photos' and owner = auth.uid());
+
+-- =====================================================================
+--  Photos de profil : stockage privé « avatars/<personne>/<fichier>.jpg »,
+--  visibles seulement par les membres de ses tribus.
+-- =====================================================================
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', false, 1048576, array['image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do nothing;
+
+drop policy if exists "avatars lus par la tribu" on storage.objects;
+create policy "avatars lus par la tribu" on storage.objects for select
+  using (bucket_id = 'avatars' and ((storage.foldername(name))[1] = auth.uid()::text
+         or public.shares_tribe(((storage.foldername(name))[1])::uuid)));
+drop policy if exists "mon avatar ajouté" on storage.objects;
+create policy "mon avatar ajouté" on storage.objects for insert
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "mon avatar supprimé" on storage.objects;
+create policy "mon avatar supprimé" on storage.objects for delete
+  using (bucket_id = 'avatars' and owner = auth.uid());
 
 -- =====================================================================
 --  Temps réel : le fil se met à jour tout seul
