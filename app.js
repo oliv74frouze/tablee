@@ -1,3 +1,6 @@
+// Version de l'appli : si la page (index.html) est plus ancienne que ce script, on recharge une fois.
+const BUILD = '8';
+if (document.documentElement.dataset.build !== BUILD){ try { if (sessionStorage.getItem('tablee_rl') !== BUILD){ sessionStorage.setItem('tablee_rl', BUILD); location.reload(); } } catch(e){} }
 'use strict';
 /* ================= utilitaires ================= */
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
@@ -494,8 +497,9 @@ function stackCard(g){
 // Commentaires sur le fil : un aperçu (nombre + dernier mot), qu'on déroule pour tout lire et répondre.
 function cmBlock(id){
   const L = S.comments[id] || [], open = S.openCm.has(id), n = L.length, last = L[n - 1];
-  const head = n ? `<button class="cmt" data-cmt="${id}" aria-expanded="${open}"><span class="ci">💬</span><span class="cn">${n} commentaire${n > 1 ? 's' : ''}</span>${!open ? `<span class="cl"><b>${esc(last.author === S.me ? 'Toi' : nameOf(last.author))}</b> ${esc(last.text)}</span>` : ''}<span class="cv">${open ? 'Masquer' : 'Voir'}</span></button>`
-    : (S.canWrite ? `<button class="cmt" data-cmt="${id}" aria-expanded="${open}"><span class="ci">💬</span><span class="cn" style="font-weight:400">${open ? 'Écrire un commentaire' : 'Commenter'}</span></button>` : '');
+  const ico = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>';
+  const head = n ? `<button type="button" class="cmt" data-cmt="${id}" aria-expanded="${open}">${ico}<span class="cx"><span class="cn">${n} commentaire${n > 1 ? 's' : ''}</span>${!open ? `<span class="cl"><b>${esc(last.author === S.me ? 'Toi' : nameOf(last.author))}</b> · ${esc(last.text)}</span>` : ''}</span><span class="cv">${open ? 'Masquer' : (n > 1 ? 'Tout voir' : 'Voir')}</span></button>`
+    : (S.canWrite ? `<button type="button" class="cmt empty" data-cmt="${id}" aria-expanded="${open}">${ico}<span class="cx"><span class="cl">${open ? 'Écrire un commentaire' : 'Commenter'}</span></span></button>` : '');
   if (!open) return `<div class="cmz">${head}</div>`;
   return `<div class="cmz">${head}<div class="cml">${L.map(c => `<div class="cm">${avatar(c.author)}<div class="bub"><b>${esc(nameOf(c.author))}</b> <span class="hint">${ago(c.at)}</span><p>${esc(c.text)}</p></div></div>`).join('')}</div>
     ${S.canWrite ? `<form class="cmf" data-cmf="${id}"><input maxlength="400" placeholder="Un mot sur ce plat…" aria-label="Commentaire"><button class="btn pri">Envoyer</button></form>` : ''}</div>`;
