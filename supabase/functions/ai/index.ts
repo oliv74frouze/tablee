@@ -94,7 +94,12 @@ async function handle(req: Request): Promise<Response> {
   if (!r.ok) {
     const detail = await r.text();
     console.error("anthropic", r.status, detail.slice(0, 500));
-    return json({ error: r.status === 400 && /image/i.test(detail) ? "image_rejected" : "upstream" }, 502);
+    const code = /credit balance/i.test(detail) ? "no_credit"
+      : r.status === 401 || r.status === 403 ? "bad_key"
+      : r.status === 404 || /model/i.test(detail) ? "bad_model"
+      : r.status === 400 && /image/i.test(detail) ? "image_rejected"
+      : r.status === 529 || r.status >= 500 ? "overloaded" : "upstream";
+    return json({ error: code, status: r.status }, 502);
   }
   const out = await r.json();
   const text = (out.content || []).filter((c: { type: string }) => c.type === "text").map((c: { text: string }) => c.text).join("");
