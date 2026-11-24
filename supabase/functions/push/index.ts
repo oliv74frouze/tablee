@@ -112,7 +112,7 @@ async function handle(req: Request): Promise<Response> {
       admin.from("tribes").select("name").eq("id", p.tribe_id).maybeSingle(),
       admin.from("profiles").select("name").eq("id", me).maybeSingle(),
       p.remake_of ? admin.from("posts").select("name, author, profiles(name)").eq("id", p.root_id || p.remake_of).maybeSingle() : Promise.resolve({ data: null }),
-      admin.from("members").select("user_id").eq("tribe_id", p.tribe_id).neq("user_id", me),
+      admin.from("members").select("user_id").eq("tribe_id", p.tribe_id).neq("user_id", me).eq("notify", true),
     ]);
     const by = (who2 && who2.name) || "Quelqu'un", prod = p.kind === "trouvaille";
     const of = orig ? (orig.author === me ? " (sa recette)" : (orig.profiles && orig.profiles.name ? ` de ${orig.profiles.name}` : "")) : "";

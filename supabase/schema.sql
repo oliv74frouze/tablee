@@ -315,6 +315,15 @@ $$;
 revoke execute on function public.save_push_sub(text, text, text), public.drop_push_sub(text) from public, anon;
 grant execute on function public.save_push_sub(text, text, text), public.drop_push_sub(text) to authenticated;
 
+-- Choix de chacun, tribu par tribu : recevoir ou non les notifications de cette tribu.
+alter table public.members add column if not exists notify boolean not null default true;
+create or replace function public.set_notify(t uuid, on_ boolean) returns void
+language sql security definer set search_path = public as $$
+  update public.members set notify = on_ where tribe_id = t and user_id = auth.uid();
+$$;
+revoke execute on function public.set_notify(uuid, boolean) from public, anon;
+grant execute on function public.set_notify(uuid, boolean) to authenticated;
+
 -- Clés de l'appli pour les notifications (créées par la fonction « push ») : illisibles depuis l'appli.
 create table if not exists public.app_keys (name text primary key, value text not null);
 alter table public.app_keys enable row level security;

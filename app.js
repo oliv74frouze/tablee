@@ -1,5 +1,5 @@
 // Version de l'appli : si la page (index.html) est plus ancienne que ce script, on recharge une fois.
-const BUILD = '9';
+const BUILD = '10';
 if (document.documentElement.dataset.build !== BUILD){ try { if (sessionStorage.getItem('tablee_rl') !== BUILD){ sessionStorage.setItem('tablee_rl', BUILD); location.reload(); } } catch(e){} }
 'use strict';
 /* ================= utilitaires ================= */
@@ -929,11 +929,17 @@ async function pushFn(body){
 const b64ToBytes = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0));
 async function currentSub(){ try { const reg = await navigator.serviceWorker.getRegistration(); return reg ? await reg.pushManager.getSubscription() : null; } catch(e){ return null; } }
 async function saveSub(sub){ const j = sub.toJSON(); const r = await S.sb.rpc('save_push_sub', {ep:j.endpoint, k:j.keys.p256dh, a:j.keys.auth}); if (r.error) throw r.error; }
-let PUSH_ON = false;
+let PUSH_ON = false, NOTIFY = {};
+async function loadNotify(){ try { const r = await S.sb.from('members').select('tribe_id, notify').eq('user_id', S.me); if (!r.error) (r.data || []).forEach(m => { NOTIFY[m.tribe_id] = m.notify !== false; }); } catch(e){} }
+async function toggleNotify(t){
+  const on = NOTIFY[t] === false; NOTIFY[t] = on; renderPush();
+  const r = await S.sb.rpc('set_notify', {t, on_:on}); if (r.error){ NOTIFY[t] = !on; renderPush('Réglage non enregistré : ' + r.error.message); }
+}
 async function refreshPush(){
   if (S.mode !== 'sb' || !pushOK()) { renderPush(); return; }
   const sub = Notification.permission === 'granted' ? await currentSub() : null;
   PUSH_ON = !!sub; if (sub) saveSub(sub).catch(() => {});   // rattache l'appareil au compte connecté
+  if (sub) await loadNotify();
   renderPush();
 }
 function renderPush(msg){
@@ -944,7 +950,9 @@ function renderPush(msg){
     ? '<p class="hint">Sur iPhone, les notifications marchent seulement depuis l’appli installée : dans Safari, touche <b>Partager › Sur l’écran d’accueil</b>, puis ouvre Tablée depuis cette icône et reviens ici.</p>'
     : '<p class="hint">Ce navigateur ne permet pas les notifications. Essaie avec Chrome (Android) ou l’appli installée sur l’écran d’accueil.</p>';
   else if (Notification.permission === 'denied') inner = '<p class="hint">Les notifications sont bloquées pour Tablée. Autorise-les dans les réglages du téléphone (Notifications › Tablée, ou les réglages du site dans le navigateur), puis reviens ici.</p>';
-  else if (PUSH_ON) inner = '<p class="hint">✓ Activées sur cet appareil : tu es prévenu quand quelqu’un de tes tribus publie ou refait une recette.</p><div class="bar"><button class="btn" id="pushOff" style="flex:1">Désactiver sur cet appareil</button><button class="btn ghost" id="pushTest">M’envoyer un test</button></div>';
+  else if (PUSH_ON) inner = '<p class="hint">✓ Activées sur cet appareil. Choisis les tribus dont tu veux être prévenu :</p>'
+    + `<div class="ntr">${S.tribes.map(t => { const on = NOTIFY[t.id] !== false; return `<button type="button" class="chip${on ? ' on' : ''}" data-ntr="${t.id}" aria-pressed="${on}">${on ? '🔔' : '🔕'} ${esc(t.name)}</button>`; }).join('')}</div>`
+    + '<div class="bar"><button class="btn" id="pushOff" style="flex:1">Tout désactiver sur cet appareil</button><button class="btn ghost" id="pushTest">Test</button></div>';
   else inner = '<p class="hint">Sois prévenu quand quelqu’un de tes tribus publie ou refait une recette.</p><button class="btn pri" id="pushOn" style="width:100%">Activer les notifications</button>';
   box.innerHTML = `<h2>Notifications</h2>${inner}${msg ? `<p class="hint" id="pushMsg">${esc(msg)}</p>` : ''}`;
 }
@@ -955,7 +963,7 @@ async function enablePush(){
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
     if (!sub){ const {key} = await pushFn({action:'key'}); sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ToBytes(key)}); }
-    await saveSub(sub); PUSH_ON = true; renderPush('C’est activé !');
+    await saveSub(sub); PUSH_ON = true; await loadNotify(); renderPush('C’est activé !');
   } catch(e){ console.error(e); renderPush('Activation impossible : ' + ((e && e.message) || e) + '. Vérifie que la fonction « push » est installée dans Supabase.'); }
 }
 async function disablePush(){
@@ -976,6 +984,7 @@ async function openFromNotif(id){
 document.addEventListener('click', e => {
   if (e.target.closest('#pushOn')) enablePush();
   else if (e.target.closest('#pushOff')) disablePush();
+  else if (e.target.closest('[data-ntr]')) toggleNotify(e.target.closest('[data-ntr]').dataset.ntr);
   else if (e.target.closest('#pushTest')) (async () => { const reg = await navigator.serviceWorker.ready; reg.showNotification(S.tribe ? S.tribe.name : 'Tablée', {body:'Voilà à quoi ressemblera une notification de Tablée.', icon:'icons/icon-192.png', badge:'icons/badge-96.png'}); })();
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.openPost) openFromNotif(e.data.openPost); });
