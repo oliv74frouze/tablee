@@ -1,5 +1,5 @@
 // Version de l'appli : si la page (index.html) est plus ancienne que ce script, on recharge une fois.
-const BUILD = '10';
+const BUILD = '11';
 if (document.documentElement.dataset.build !== BUILD){ try { if (sessionStorage.getItem('tablee_rl') !== BUILD){ sessionStorage.setItem('tablee_rl', BUILD); location.reload(); } } catch(e){} }
 'use strict';
 /* ================= utilitaires ================= */
@@ -509,7 +509,8 @@ function cmBlock(id){
 function paintCm(id){ $$(`.post[data-root="${id}"] .cmz`).forEach(el => { el.outerHTML = cmBlock(id); }); }
 async function sendComment(id, t){
   const c = {author:S.me, text:t, at:Date.now()};
-  if (S.mode === 'sb'){ const r = await S.sb.from('comments').insert({post_id:id, tribe_id:S.tribe.id, text:t}); if (r.error){ toast('Commentaire non envoyé : réessaie.'); return false; } }
+  if (S.mode === 'sb'){ const r = await S.sb.from('comments').insert({post_id:id, tribe_id:S.tribe.id, text:t}).select('id'); if (r.error){ toast('Commentaire non envoyé : réessaie.'); return false; }
+    const cid = r.data && r.data[0] && r.data[0].id; if (cid) pushFn({action:'comment', comments:[cid]}).catch(e => console.warn('notification non envoyée', e)); }
   else { const d = local.read(); d.comments = d.comments || {}; (d.comments[id] = d.comments[id] || []).push(c); local.write(d); }
   S.comments[id] = [...(S.comments[id] || []), c]; return true;
 }
@@ -950,10 +951,10 @@ function renderPush(msg){
     ? '<p class="hint">Sur iPhone, les notifications marchent seulement depuis l’appli installée : dans Safari, touche <b>Partager › Sur l’écran d’accueil</b>, puis ouvre Tablée depuis cette icône et reviens ici.</p>'
     : '<p class="hint">Ce navigateur ne permet pas les notifications. Essaie avec Chrome (Android) ou l’appli installée sur l’écran d’accueil.</p>';
   else if (Notification.permission === 'denied') inner = '<p class="hint">Les notifications sont bloquées pour Tablée. Autorise-les dans les réglages du téléphone (Notifications › Tablée, ou les réglages du site dans le navigateur), puis reviens ici.</p>';
-  else if (PUSH_ON) inner = '<p class="hint">✓ Activées sur cet appareil. Choisis les tribus dont tu veux être prévenu :</p>'
+  else if (PUSH_ON) inner = '<p class="hint">✓ Activées sur cet appareil : nouveaux posts de la tribu, et commentaires sur les recettes que tu as publiées ou commentées. Choisis les tribus dont tu veux être prévenu :</p>'
     + `<div class="ntr">${S.tribes.map(t => { const on = NOTIFY[t.id] !== false; return `<button type="button" class="chip${on ? ' on' : ''}" data-ntr="${t.id}" aria-pressed="${on}">${on ? '🔔' : '🔕'} ${esc(t.name)}</button>`; }).join('')}</div>`
     + '<div class="bar"><button class="btn" id="pushOff" style="flex:1">Tout désactiver sur cet appareil</button><button class="btn ghost" id="pushTest">Test</button></div>';
-  else inner = '<p class="hint">Sois prévenu quand quelqu’un de tes tribus publie ou refait une recette.</p><button class="btn pri" id="pushOn" style="width:100%">Activer les notifications</button>';
+  else inner = '<p class="hint">Sois prévenu quand quelqu’un de tes tribus publie une recette, ou commente une recette que tu as publiée ou commentée.</p><button class="btn pri" id="pushOn" style="width:100%">Activer les notifications</button>';
   box.innerHTML = `<h2>Notifications</h2>${inner}${msg ? `<p class="hint" id="pushMsg">${esc(msg)}</p>` : ''}`;
 }
 async function enablePush(){

@@ -288,6 +288,7 @@ create policy "mon avatar supprimé" on storage.objects for delete
 --  membres de la tribu quand quelqu'un publie.
 -- =====================================================================
 alter table public.posts add column if not exists notified_at timestamptz;
+alter table public.comments add column if not exists notified_at timestamptz;
 create table if not exists public.push_subs (
   endpoint   text primary key check (char_length(endpoint) < 1000),
   user_id    uuid not null references public.profiles(id) on delete cascade,

@@ -81,7 +81,7 @@ async function handle(req: Request): Promise<Response> {
   if (req.method !== "POST") return json({ error: "method" }, 405);
   // Clé « service » fournie automatiquement par Supabase à ses fonctions (jamais visible dans l'appli).
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
-  let body: { action?: string; posts?: string[] };
+  let body: { action?: string; posts?: string[]; comments?: string[] };
   try { body = await req.json(); } catch { return json({ error: "bad_request" }, 400); }
 
   // Clés VAPID : créées une seule fois, puis relues.
@@ -94,7 +94,7 @@ async function handle(req: Request): Promise<Response> {
     return k;
   };
   if (body.action === "key") return json({ key: (await getKeys()).pub });
-  if (body.action !== "notify") return json({ error: "bad_request" }, 400);
+  if (body.action !== "notify" && body.action !== "comment") return json({ error: "bad_request" }, 400);
 
   // Qui appelle ? Seul l'auteur d'un post qui vient d'être publié peut déclencher sa notification.
   const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
@@ -103,6 +103,38 @@ async function handle(req: Request): Promise<Response> {
   const keys = await getKeys();
   const subject = (req.headers.get("origin") || "https://github.com").replace(/\/$/, "");
   let sent = 0, gone = 0;
+  const deliver = async (s: Sub, msg: unknown) => {
+    try { const st = await send(s, msg, keys, subject); if (st >= 200 && st < 300) sent++; else if (st === 404 || st === 410) { gone++; await admin.from("push_subs").delete().eq("endpoint", s.endpoint); } }
+    catch (e) { console.error("push", e); }
+  };
+
+  // ----- un commentaire : prévenir l'auteur de la recette et ceux qui l'ont déjà commentée -----
+  if (body.action === "comment") {
+    for (const id of (Array.isArray(body.comments) ? body.comments : []).slice(0, 3)) {
+      const { data: c } = await admin.from("comments").select("id, post_id, tribe_id, author, text, created_at, notified_at").eq("id", id).maybeSingle();
+      if (!c || c.author !== me || c.notified_at || Date.now() - Date.parse(c.created_at) > 15 * 60e3) continue;
+      const { data: mark } = await admin.from("comments").update({ notified_at: new Date().toISOString() }).eq("id", id).is("notified_at", null).select("id");
+      if (!mark || !mark.length) continue;
+      const [{ data: post }, { data: tribe }, { data: who2 }, { data: others }, { data: mem }] = await Promise.all([
+        admin.from("posts").select("id, name, author").eq("id", c.post_id).maybeSingle(),
+        admin.from("tribes").select("name").eq("id", c.tribe_id).maybeSingle(),
+        admin.from("profiles").select("name").eq("id", me).maybeSingle(),
+        admin.from("comments").select("author").eq("post_id", c.post_id).neq("author", me),
+        admin.from("members").select("user_id").eq("tribe_id", c.tribe_id).eq("notify", true),
+      ]);
+      if (!post) continue;
+      const allowed = new Set((mem || []).map((m: { user_id: string }) => m.user_id));
+      const targets = [...new Set([post.author, ...(others || []).map((o: { author: string }) => o.author)])].filter((u) => u && u !== me && allowed.has(u));
+      if (!targets.length) continue;
+      const by = (who2 && who2.name) || "Quelqu'un", quote = c.text.length > 90 ? c.text.slice(0, 89) + "…" : c.text;
+      const { data: subs } = await admin.from("push_subs").select("endpoint, p256dh, auth, user_id").in("user_id", targets);
+      for (const s of subs || []) {
+        const text = s.user_id === post.author ? `${by} a commenté ta recette ${post.name} : « ${quote} »` : `${by} a aussi commenté ${post.name} : « ${quote} »`;
+        await deliver(s, { title: (tribe && tribe.name) || "Tablée", body: text.slice(0, 200), url: `./?post=${post.id}`, tag: `cm-${post.id}` });
+      }
+    }
+    return json({ sent, gone });
+  }
   for (const id of (Array.isArray(body.posts) ? body.posts : []).slice(0, 5)) {
     const { data: p } = await admin.from("posts").select("id, tribe_id, author, name, kind, remake_of, root_id, twist, created_at, notified_at").eq("id", id).maybeSingle();
     if (!p || p.author !== me || p.notified_at || Date.now() - Date.parse(p.created_at) > 15 * 60e3) continue;
@@ -121,10 +153,7 @@ async function handle(req: Request): Promise<Response> {
     const ids = (mem || []).map((m: { user_id: string }) => m.user_id); if (!ids.length) continue;
     const { data: subs } = await admin.from("push_subs").select("endpoint, p256dh, auth").in("user_id", ids);
     const msg = { title: (tribe && tribe.name) || "Tablée", body: text.slice(0, 180), url: `./?post=${p.root_id || p.id}`, tag: `post-${p.id}` };
-    for (const s of subs || []) {
-      try { const st = await send(s, msg, keys, subject); if (st >= 200 && st < 300) sent++; else if (st === 404 || st === 410) { gone++; await admin.from("push_subs").delete().eq("endpoint", s.endpoint); } }
-      catch (e) { console.error("push", e); }
-    }
+    for (const s of subs || []) await deliver(s, msg);
   }
   return json({ sent, gone });
 }
