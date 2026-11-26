@@ -111,7 +111,7 @@ async function handle(req: Request): Promise<Response> {
   // ----- un commentaire : prévenir l'auteur de la recette et ceux qui l'ont déjà commentée -----
   if (body.action === "comment") {
     for (const id of (Array.isArray(body.comments) ? body.comments : []).slice(0, 3)) {
-      const { data: c } = await admin.from("comments").select("id, post_id, tribe_id, author, text, created_at, notified_at").eq("id", id).maybeSingle();
+      const { data: c } = await admin.from("comments").select("*").eq("id", id).maybeSingle();
       if (!c || c.author !== me || c.notified_at || Date.now() - Date.parse(c.created_at) > 15 * 60e3) continue;
       const { data: mark } = await admin.from("comments").update({ notified_at: new Date().toISOString() }).eq("id", id).is("notified_at", null).select("id");
       if (!mark || !mark.length) continue;
@@ -120,16 +120,20 @@ async function handle(req: Request): Promise<Response> {
         admin.from("tribes").select("name").eq("id", c.tribe_id).maybeSingle(),
         admin.from("profiles").select("name").eq("id", me).maybeSingle(),
         admin.from("comments").select("author").eq("post_id", c.post_id).neq("author", me),
-        admin.from("members").select("user_id").eq("tribe_id", c.tribe_id).eq("notify", true),
+        admin.from("members").select("user_id, notify").eq("tribe_id", c.tribe_id),
       ]);
       if (!post) continue;
-      const allowed = new Set((mem || []).map((m: { user_id: string }) => m.user_id));
-      const targets = [...new Set([post.author, ...(others || []).map((o: { author: string }) => o.author)])].filter((u) => u && u !== me && allowed.has(u));
+      // Les personnes citées avec @ sont prévenues même si elles ont coupé la tribu ; les autres seulement si elles la suivent.
+      const members = new Set((mem || []).map((m: { user_id: string }) => m.user_id));
+      const follows = new Set((mem || []).filter((m: { notify: boolean }) => m.notify !== false).map((m: { user_id: string }) => m.user_id));
+      const tagged = new Set(((c.mentions || []) as string[]).filter((u) => u !== me && members.has(u)));
+      const targets = [...new Set([...tagged, post.author, ...(others || []).map((o: { author: string }) => o.author)])].filter((u) => u && u !== me && (tagged.has(u) || follows.has(u)));
       if (!targets.length) continue;
       const by = (who2 && who2.name) || "Quelqu'un", quote = c.text.length > 90 ? c.text.slice(0, 89) + "…" : c.text;
       const { data: subs } = await admin.from("push_subs").select("endpoint, p256dh, auth, user_id").in("user_id", targets);
       for (const s of subs || []) {
-        const text = s.user_id === post.author ? `${by} a commenté ta recette ${post.name} : « ${quote} »` : `${by} a aussi commenté ${post.name} : « ${quote} »`;
+        const text = tagged.has(s.user_id) ? `${by} t'a cité dans ${post.name} : « ${quote} »`
+          : s.user_id === post.author ? `${by} a commenté ta recette ${post.name} : « ${quote} »` : `${by} a aussi commenté ${post.name} : « ${quote} »`;
         await deliver(s, { title: (tribe && tribe.name) || "Tablée", body: text.slice(0, 200), url: `./?post=${post.id}`, tag: `cm-${post.id}` });
       }
     }

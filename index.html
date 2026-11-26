@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr" data-build="11">
+<html lang="fr" data-build="12">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -136,13 +136,13 @@ main{padding:14px 16px 0;display:flex;flex-direction:column;gap:14px}
 .idx.weak{background:var(--soft);color:var(--accent)}
 .acts{display:flex;gap:8px;margin-top:2px}
 .cmz{margin-top:4px;display:flex;flex-direction:column;gap:10px}
-.cmt{display:flex;align-items:center;gap:10px;width:100%;margin:0;padding:10px 12px;border:0;border-radius:14px;background:var(--bg);color:var(--ink);font:inherit;font-size:14px;line-height:1.3;text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none;-webkit-tap-highlight-color:transparent}
+.cmt{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;margin:0;padding:10px 12px;border:0;border-radius:14px;background:var(--bg);color:var(--ink);font:inherit;font-size:14px;line-height:1.3;text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none;-webkit-tap-highlight-color:transparent}
 .cmt svg{width:18px;height:18px;flex:none;color:var(--muted)}
 .cmt .cx{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .cmt .cn{font-weight:700;font-size:13px;color:var(--muted)}
 .cmt .cl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cmt .cl b{font-weight:700}
 .cmt .cv{flex:none;color:var(--accent);font-weight:700;font-size:13px}
-.cmt.empty{background:none;padding:6px 2px;color:var(--muted)}
+.cmt.none{background:none;padding:6px 2px;color:var(--muted)}
 .ntr{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 10px}
 .cml{display:flex;flex-direction:column;gap:8px}.post .cm .bub{background:var(--bg)}
 .cmf input{font:inherit;color:var(--ink);min-width:0}
@@ -258,7 +258,11 @@ nav .plus svg{width:28px;height:28px}
 .cm{display:flex;gap:10px;align-items:flex-start}
 .cm .bub{background:var(--card);border-radius:12px;padding:8px 12px;flex:1}
 .cm .bub b{font-size:13px}.cm .bub p{margin:2px 0 0}
-.cmf{display:flex;gap:8px}.cmf input{flex:1;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px 12px}
+.cmf{display:flex;gap:8px;position:relative;flex-wrap:wrap}.cmf .menbox{flex-basis:100%;order:-1}
+.menbox{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 6px 20px rgba(60,35,20,.15)}
+.menbox button{display:flex;align-items:center;gap:10px;padding:8px 12px;border:0;background:none;font:inherit;color:var(--ink);text-align:left;cursor:pointer}
+.menbox button+button{border-top:1px solid var(--line)}.menbox .av{width:28px;height:28px;font-size:12px}
+.men{color:var(--accent);font-weight:700}.cmf input{flex:1;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px 12px}
 .toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;z-index:80;max-width:90%;display:none}
 .toast.on{display:block}
 .empty{text-align:center;color:var(--muted);padding:30px 10px}
@@ -462,6 +466,6 @@ button.mode{cursor:pointer;border:0;font:inherit;max-width:46vw;white-space:nowr
 <div class="toast" id="toast" role="status"></div>
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<script src="app.js?b=11"></script>
+<script src="app.js?b=12"></script>
 </body>
 </html>

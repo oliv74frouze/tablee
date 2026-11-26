@@ -1,5 +1,5 @@
 // Version de l'appli : si la page (index.html) est plus ancienne que ce script, on recharge une fois.
-const BUILD = '11';
+const BUILD = '12';
 if (document.documentElement.dataset.build !== BUILD){ try { if (sessionStorage.getItem('tablee_rl') !== BUILD){ sessionStorage.setItem('tablee_rl', BUILD); location.reload(); } } catch(e){} }
 'use strict';
 /* ================= utilitaires ================= */
@@ -181,12 +181,12 @@ async function reloadTribe(){
     S.sb.from('posts').select('*').eq('tribe_id', T).order('created_at', {ascending:false}).limit(500),
     S.sb.from('wants').select('user_id, post_id').eq('tribe_id', T),
     S.sb.from('members').select('user_id, role, joined_at, profiles(name, avatar)').eq('tribe_id', T),
-    S.sb.from('comments').select('post_id, author, text, created_at').eq('tribe_id', T).order('created_at').limit(3000)]);
+    S.sb.from('comments').select('*').eq('tribe_id', T).order('created_at').limit(3000)]);
   if (P.error){ $('#feed').innerHTML = '<p class="empty">Impossible de lire le carnet : vérifie ta connexion internet.</p>'; return; }
   (M.data || []).forEach(m => { S.names[m.user_id] = (m.profiles && m.profiles.name) || ''; S.avatars[m.user_id] = (m.profiles && m.profiles.avatar) || ''; });
   S.members = (M.data || []).map(m => ({id:m.user_id, role:m.role, joined:m.joined_at ? Date.parse(m.joined_at) : 0, name:(m.profiles && m.profiles.name) || ''}));
   await signUrls(Object.values(S.avatars), 'avatars');
-  const cm = {}; (CM.data || []).forEach(c => { (cm[c.post_id] = cm[c.post_id] || []).push({author:c.author, text:c.text, at:Date.parse(c.created_at)}); }); S.comments = cm;
+  const cm = {}; (CM.data || []).forEach(c => { (cm[c.post_id] = cm[c.post_id] || []).push({author:c.author, text:c.text, at:Date.parse(c.created_at), mentions:c.mentions || []}); }); S.comments = cm;
   const w = {}; (W.data || []).forEach(x => { (w[x.user_id] = w[x.user_id] || []).push(x.post_id); }); S.wants = w;
   await signUrls((P.data || []).flatMap(r => r.photos || []));
   S.posts = (P.data || []).map(fromRow);
@@ -501,15 +501,47 @@ function cmBlock(id){
   const L = S.comments[id] || [], open = S.openCm.has(id), n = L.length, last = L[n - 1];
   const ico = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>';
   const head = n ? `<button type="button" class="cmt" data-cmt="${id}" aria-expanded="${open}">${ico}<span class="cx"><span class="cn">${n} commentaire${n > 1 ? 's' : ''}</span>${!open ? `<span class="cl"><b>${esc(last.author === S.me ? 'Toi' : nameOf(last.author))}</b> · ${esc(last.text)}</span>` : ''}</span><span class="cv">${open ? 'Masquer' : (n > 1 ? 'Tout voir' : 'Voir')}</span></button>`
-    : (S.canWrite ? `<button type="button" class="cmt empty" data-cmt="${id}" aria-expanded="${open}">${ico}<span class="cx"><span class="cl">${open ? 'Écrire un commentaire' : 'Commenter'}</span></span></button>` : '');
+    : (S.canWrite ? `<button type="button" class="cmt none" data-cmt="${id}" aria-expanded="${open}">${ico}<span class="cx"><span class="cl">${open ? 'Écrire un commentaire' : 'Commenter'}</span></span></button>` : '');
   if (!open) return `<div class="cmz">${head}</div>`;
-  return `<div class="cmz">${head}<div class="cml">${L.map(c => `<div class="cm">${avatar(c.author)}<div class="bub"><b>${esc(nameOf(c.author))}</b> <span class="hint">${ago(c.at)}</span><p>${esc(c.text)}</p></div></div>`).join('')}</div>
-    ${S.canWrite ? `<form class="cmf" data-cmf="${id}"><input maxlength="400" placeholder="Un mot sur ce plat…" aria-label="Commentaire"><button class="btn pri">Envoyer</button></form>` : ''}</div>`;
+  return `<div class="cmz">${head}<div class="cml">${L.map(c => `<div class="cm">${avatar(c.author)}<div class="bub"><b>${esc(nameOf(c.author))}</b> <span class="hint">${ago(c.at)}</span><p>${cmText(c.text)}</p></div></div>`).join('')}</div>
+    ${S.canWrite ? `<form class="cmf" data-cmf="${id}"><input maxlength="400" placeholder="Un mot… (@ pour citer quelqu’un)" aria-label="Commentaire" autocomplete="off"><button class="btn pri">Envoyer</button></form>` : ''}</div>`;
 }
+/* ---------- @mentions dans les commentaires ---------- */
+const mentionables = () => S.members.filter(m => m.id !== S.me && m.name);
+function cmText(t){
+  let h = esc(t);
+  mentionables().map(m => m.name).sort((a, b) => b.length - a.length).forEach(n => { h = h.split('@' + esc(n)).join(`<b class="men">@${esc(n)}</b>`); });
+  return h;
+}
+function takeMentions(input, t){ return mentionables().filter(m => t.includes('@' + m.name)).map(m => m.id); }
+let MEN = null;   // {input, start, box}
+function closeMention(){ if (MEN && MEN.box) MEN.box.remove(); MEN = null; }
+function mentionInput(input){
+  const pos = input.selectionStart || input.value.length, before = input.value.slice(0, pos), m = before.match(/(^|\s)@([^@\n]{0,24})$/);
+  if (!m || S.mode !== 'sb'){ closeMention(); return; }
+  const q = m[2].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''), norm = x => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const L = mentionables().filter(x => norm(x.name).split(/\s+/).some(w => w.startsWith(q)) || norm(x.name).startsWith(q)).slice(0, 5);
+  if (!L.length){ closeMention(); return; }
+  if (!MEN || MEN.input !== input){ closeMention(); const box = document.createElement('div'); box.className = 'menbox'; input.closest('form').prepend(box); MEN = {input, box}; }
+  MEN.start = pos - m[2].length - 1;
+  MEN.box.innerHTML = L.map(x => `<button type="button" data-men="${x.id}">${avatar(x.id)}<span>${esc(x.name)}</span></button>`).join('');
+}
+document.addEventListener('input', e => { if (e.target.matches && e.target.matches('.cmf input')) mentionInput(e.target); });
+document.addEventListener('keyup', e => { if (e.target.matches && e.target.matches('.cmf input') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) mentionInput(e.target); });
+document.addEventListener('focusout', e => { if (MEN && e.target === MEN.input) setTimeout(() => { if (MEN && document.activeElement !== MEN.input) closeMention(); }, 200); });
+// pointerdown : on choisit la personne sans faire perdre le clavier au champ
+document.addEventListener('pointerdown', e => { const b = e.target.closest('[data-men]'); if (!b || !MEN) return; e.preventDefault();
+  const m = S.members.find(x => x.id === b.dataset.men), i = MEN.input, pos = i.selectionStart || i.value.length;
+  i.value = i.value.slice(0, MEN.start) + '@' + m.name + ' ' + i.value.slice(pos); const c = MEN.start + m.name.length + 2;
+  closeMention(); i.focus(); i.setSelectionRange(c, c); });
+
 function paintCm(id){ $$(`.post[data-root="${id}"] .cmz`).forEach(el => { el.outerHTML = cmBlock(id); }); }
-async function sendComment(id, t){
-  const c = {author:S.me, text:t, at:Date.now()};
-  if (S.mode === 'sb'){ const r = await S.sb.from('comments').insert({post_id:id, tribe_id:S.tribe.id, text:t}).select('id'); if (r.error){ toast('Commentaire non envoyé : réessaie.'); return false; }
+async function sendComment(id, t, mentions = []){
+  const c = {author:S.me, text:t, at:Date.now(), mentions};
+  if (S.mode === 'sb'){
+    const row = {post_id:id, tribe_id:S.tribe.id, text:t}; let r = await S.sb.from('comments').insert(mentions.length ? {...row, mentions} : row).select('id');
+    if (r.error && mentions.length) r = await S.sb.from('comments').insert(row).select('id');   // base pas encore à jour : on envoie sans les mentions
+    if (r.error){ toast('Commentaire non envoyé : réessaie.'); return false; }
     const cid = r.data && r.data[0] && r.data[0].id; if (cid) pushFn({action:'comment', comments:[cid]}).catch(e => console.warn('notification non envoyée', e)); }
   else { const d = local.read(); d.comments = d.comments || {}; (d.comments[id] = d.comments[id] || []).push(c); local.write(d); }
   S.comments[id] = [...(S.comments[id] || []), c]; return true;
@@ -519,7 +551,8 @@ document.addEventListener('click', e => { const b = e.target.closest('[data-cmt]
   if (S.openCm.has(id) && !(S.comments[id] || []).length){ const i = $(`.post[data-root="${id}"] .cmf input`); if (i) i.focus(); } });
 document.addEventListener('submit', async e => { const f = e.target.closest('[data-cmf]'); if (!f) return; e.preventDefault();
   const i = f.querySelector('input'), t = i.value.trim(); if (!t) return; i.value = ''; i.disabled = true;
-  if (await sendComment(f.dataset.cmf, t)){ CM_HOLD = false; paintCm(f.dataset.cmf); } else { i.value = t; i.disabled = false; } });
+  const men = takeMentions(i, t); closeMention();
+  if (await sendComment(f.dataset.cmf, t, men)){ CM_HOLD = false; paintCm(f.dataset.cmf); } else { i.value = t; i.disabled = false; } });
 // Pendant qu'on écrit un commentaire dans le fil, on ne redessine pas le fil (sinon le texte saisi disparaîtrait).
 let CM_HOLD = false;
 document.addEventListener('focusout', e => { if (CM_HOLD && e.target.closest && e.target.closest('#feed .cmf')) setTimeout(() => { if (!document.activeElement || !document.activeElement.closest('#feed .cmf')){ CM_HOLD = false; render(); } }, 300); });
@@ -628,7 +661,7 @@ function openDetail(id){
     ${versionsHtml(base, remakes, ex)}
     ${remakes.length ? `<div><div class="lbl" style="margin-bottom:6px">${pr ? 'Goûté' : 'Refait'} par la tribu (${remakes.length})</div><div class="mk">${remakes.map(r => `<div class="m" data-ver="${r.id}"><div class="i">${r.photos && r.photos[0] ? `<img src="${r.photos[0]}" alt="">` : ''}</div><div style="flex:1"><b>${esc(nameOf(r.author))}</b><br><span class="hint">${r.author === base.author ? 'sa propre recette · ' : ''}${ago(r.createdAt)}</span>${r.twist ? '<br><b style="color:var(--saffron)">À sa sauce</b>' : ''}${r.desc ? `<br>${esc(r.desc)}` : ''}${r.editedAt ? ' <span class="hint">(modifié)</span>' : ''}</div>${r.author === S.me && S.canWrite ? `<button class="btn" style="align-self:center;padding:6px 12px" data-edit="${r.id}">Modifier</button>` : ''}</div>`).join('')}</div></div>` : ''}
     ${ex ? '<p class="hint">Ceci est un exemple : publie ton premier plat pour remplir le carnet.</p>' : `<div><div class="lbl" style="margin-bottom:6px">Commentaires</div><div id="cmts" style="display:flex;flex-direction:column;gap:8px"><p class="hint">Chargement…</p></div>
-      ${S.canWrite ? `<form class="cmf" id="cmf" style="margin-top:8px"><input id="cmIn" maxlength="400" placeholder="Un mot sur ce plat…" aria-label="Commentaire"><button class="btn pri">Envoyer</button></form>` : ''}</div>`}
+      ${S.canWrite ? `<form class="cmf" id="cmf" style="margin-top:8px"><input id="cmIn" maxlength="400" placeholder="Un mot… (@ pour citer quelqu’un)" aria-label="Commentaire" autocomplete="off"><button class="btn pri">Envoyer</button></form>` : ''}</div>`}
     ${mine ? `<div class="bar">${S.canWrite || S.mode !== 'db' ? `<button class="btn" style="flex:1" data-edit="${p.id}">Modifier ce post</button>` : ''}<button class="btn danger ghost" style="flex:1" id="delPost" data-id="${p.id}">Supprimer ce post</button></div>` : ''}`;
   $('#detail').classList.add('on');
   if (!ex) watchComments(base.id);
@@ -663,18 +696,18 @@ function openVersion(id){
 function closeDetail(){ $('#detail').classList.remove('on'); curDetail = null; if (S.unsubC){ S.unsubC(); S.unsubC = null; } }
 function watchComments(postId){
   const show = L => { const b = $('#cmts'); if (!b) return;
-    b.innerHTML = L.length ? L.map(c => `<div class="cm">${avatar(c.author)}<div class="bub"><b>${esc(nameOf(c.author))}</b> <span class="hint">${ago(c.at)}</span><p>${esc(c.text)}</p></div></div>`).join('') : '<p class="hint">Pas encore de commentaire.</p>'; };
+    b.innerHTML = L.length ? L.map(c => `<div class="cm">${avatar(c.author)}<div class="bub"><b>${esc(nameOf(c.author))}</b> <span class="hint">${ago(c.at)}</span><p>${cmText(c.text)}</p></div></div>`).join('') : '<p class="hint">Pas encore de commentaire.</p>'; };
   let load = null;
   if (S.mode === 'sb'){
     if (S.unsubC) S.unsubC();
-    load = async () => { const r = await S.sb.from('comments').select('author, text, created_at').eq('post_id', postId).order('created_at').limit(200);
-      const L = (r.data || []).map(c => ({author:c.author, text:c.text, at:Date.parse(c.created_at)})); S.comments[postId] = L; show(L); paintCm(postId); };
+    load = async () => { const r = await S.sb.from('comments').select('*').eq('post_id', postId).order('created_at').limit(200);
+      const L = (r.data || []).map(c => ({author:c.author, text:c.text, at:Date.parse(c.created_at), mentions:c.mentions || []})); S.comments[postId] = L; show(L); paintCm(postId); };
     load();
     const ch = S.sb.channel('cm-' + postId).on('postgres_changes', {event:'INSERT', schema:'public', table:'comments', filter:'post_id=eq.' + postId}, load).subscribe();
     S.unsubC = () => S.sb.removeChannel(ch);
   } else show((local.read().comments || {})[postId] || []);
-  const f = $('#cmf'); if (f) f.onsubmit = async e => { e.preventDefault(); const t = $('#cmIn').value.trim(); if (!t) return; $('#cmIn').value = '';
-    if (await sendComment(postId, t)){ show(S.comments[postId]); paintCm(postId); if (load) load(); } else $('#cmIn').value = t; };
+  const f = $('#cmf'); if (f) f.onsubmit = async e => { e.preventDefault(); const t = $('#cmIn').value.trim(); if (!t) return; const men = takeMentions($('#cmIn'), t); closeMention(); $('#cmIn').value = '';
+    if (await sendComment(postId, t, men)){ show(S.comments[postId]); paintCm(postId); if (load) load(); } else $('#cmIn').value = t; };
 }
 
 /* ================= publier ================= */

@@ -289,6 +289,8 @@ create policy "mon avatar supprimé" on storage.objects for delete
 -- =====================================================================
 alter table public.posts add column if not exists notified_at timestamptz;
 alter table public.comments add column if not exists notified_at timestamptz;
+-- Personnes citées avec @ dans un commentaire (ajouté le 26 nov.).
+alter table public.comments add column if not exists mentions uuid[] not null default '{}' check (cardinality(mentions) <= 10);
 create table if not exists public.push_subs (
   endpoint   text primary key check (char_length(endpoint) < 1000),
   user_id    uuid not null references public.profiles(id) on delete cascade,
